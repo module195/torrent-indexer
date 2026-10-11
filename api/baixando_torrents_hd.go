@@ -117,76 +117,139 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 	}
 }
 
-// resolveGateLink tenta extrair o magnet a partir de um link de gate
-func resolveGateLink(ctx context.Context, i *Indexer, gateURL, referer string) string {
-	resp, err := i.requester.GetDocument(ctx, gateURL)
-	if err != nil {
-		logging.Debug().Err(err).Str("gate", gateURL).Msg("Failed to resolve gate")
-		return ""
-	}
-	defer resp.Close()
-
-	body, err := io.ReadAll(resp)
-	if err != nil {
-		return ""
-	}
-
-	content := string(body)
-
-	// 1. Magnet direto no corpo
+// extractMagnetFromContent procura magnet em texto/HTML de várias formas
+func extractMagnetFromContent(content string) string {
+	// Magnet direto
 	if m := regexp.MustCompile(`magnet:\?[^"'\s<>]+`).FindString(content); m != "" {
-		logging.Debug().Str("gate", gateURL).Str("magnet", m[:min(40, len(m))]).Msg("Magnet found in body")
 		return m
 	}
 
-	// 2. Parsear HTML
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
-	if err != nil {
-		return ""
+	// JS location / window.location
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?:window\.)?location(?:\.href)?\s*=\s*['"](magnet:[^'"]+)['"]`),
+		regexp.MustCompile(`(?:window\.)?location\.replace\s*\(\s*['"](magnet:[^'"]+)['"]\s*\)`),
+		regexp.MustCompile(`document\.location\s*=\s*['"](magnet:[^'"]+)['"]`),
+		regexp.MustCompile(`href\s*=\s*['"](magnet:[^'"]+)['"]`),
 	}
-
-	// 2a. Link magnet
-	if href, exists := doc.Find("a[href^='magnet:']").First().Attr("href"); exists && href != "" {
-		logging.Debug().Str("gate", gateURL).Msg("Magnet found in <a> tag")
-		return href
-	}
-
-	// 2b. Meta refresh
-	if meta, exists := doc.Find("meta[http-equiv='refresh'], meta[http-equiv='Refresh']").Attr("content"); exists {
-		if parts := strings.SplitN(strings.ToLower(meta), "url=", 2); len(parts) == 2 {
-			redirect := strings.TrimSpace(parts[1])
-			if strings.HasPrefix(redirect, "magnet:") {
-				logging.Debug().Str("gate", gateURL).Msg("Magnet found in meta refresh")
-				return redirect
-			}
+	for _, re := range patterns {
+		if m := re.FindStringSubmatch(content); len(m) > 1 {
+			return m[1]
 		}
 	}
-
-	// 2c. JavaScript window.location ou location.href
-	if m := regexp.MustCompile(`(?:window\.)?location(?:\.href)?\s*=\s*['"](magnet:[^'"]+)['"]`).FindStringSubmatch(content); len(m) > 1 {
-		logging.Debug().Str("gate", gateURL).Msg("Magnet found in JS location")
-		return m[1]
-	}
-
-	// 2d. data-magnet ou outros atributos comuns
-	if magnet, exists := doc.Find("[data-magnet], [data-href]").Attr("data-magnet"); exists && strings.HasPrefix(magnet, "magnet:") {
-		return magnet
-	}
-
-	logging.Debug().
-		Str("gate", gateURL).
-		Int("body_len", len(content)).
-		Str("body_sample", content[:min(300, len(content))]).
-		Msg("No magnet found in gate response")
 
 	return ""
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// resolveGateLink tenta seguir a cadeia de gates de forma mais agressiva
+func resolveGateLink(ctx context.Context, i *Indexer, gateURL, referer string) string {
+	visited := make(map[string]bool)
+	current := gateURL
+
+	for step := 0; step < 6; step++ {
+		if visited[current] {
+			break
+		}
+		visited[current] = true
+
+		resp, err := i.requester.GetDocument(ctx, current)
+		if err != nil {
+			logging.Debug().Err(err).Str("url", current).Int("step", step).Msg("Gate request failed")
+			break
+		}
+
+		body, err := io.ReadAll(resp)
+		resp.Close()
+		if err != nil {
+			break
+		}
+
+		content := string(body)
+
+		// Tenta extrair magnet do conteúdo atual
+		if magnet := extractMagnetFromContent(content); magnet != "" {
+			logging.Debug().Str("from", current).Int("step", step).Msg("Magnet extracted")
+			return magnet
+		}
+
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
+		if err != nil {
+			break
+		}
+
+		// Procura link magnet direto
+		if href, exists := doc.Find("a[href^='magnet:']").First().Attr("href"); exists && href != "" {
+			return href
+		}
+
+		// Meta refresh
+		if meta, exists := doc.Find("meta[http-equiv='refresh'], meta[http-equiv='Refresh']").Attr("content"); exists {
+			lower := strings.ToLower(meta)
+			if idx := strings.Index(lower, "url="); idx != -1 {
+				redirect := strings.TrimSpace(meta[idx+4:])
+				redirect = strings.Trim(redirect, `"'`)
+				if strings.HasPrefix(redirect, "magnet:") {
+					return redirect
+				}
+				if strings.HasPrefix(redirect, "http") {
+					current = redirect
+					continue
+				}
+			}
+		}
+
+		// Procura próximo hop (botão "Vamos começar", Continuar, etc.)
+		nextURL := ""
+		doc.Find("a[href]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+			href, _ := s.Attr("href")
+			text := strings.ToLower(strings.TrimSpace(s.Text()))
+			if href == "" || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "javascript:") {
+				return true
+			}
+			// Prioriza botões de continuar / começar / jump
+			if strings.Contains(text, "vamos começar") || strings.Contains(text, "continuar") ||
+				strings.Contains(text, "começar") || strings.Contains(href, "/jump/") ||
+				strings.Contains(href, "bolsofeliz") || strings.Contains(href, "x.gd") ||
+				strings.Contains(href, "garimpou") {
+				nextURL = href
+				return false
+			}
+			return true
+		})
+
+		if nextURL == "" {
+			// Pega o primeiro link externo que não seja do mesmo domínio
+			doc.Find("a[href^='http']").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+				href, _ := s.Attr("href")
+				if href != "" && !strings.Contains(href, "baixandotorrentshd") {
+					nextURL = href
+					return false
+				}
+				return true
+			})
+		}
+
+		if nextURL == "" {
+			logging.Debug().Str("url", current).Int("step", step).Msg("No next hop found")
+			break
+		}
+
+		// Resolve URL relativa
+		if !strings.HasPrefix(nextURL, "http") {
+			base, err := url.Parse(current)
+			if err == nil {
+				ref, err := url.Parse(nextURL)
+				if err == nil {
+					nextURL = base.ResolveReference(ref).String()
+				}
+			}
+		}
+
+		logging.Debug().Str("from", current).Str("to", nextURL).Int("step", step).Msg("Following gate hop")
+		current = nextURL
 	}
-	return b
+
+	logging.Debug().Str("gate", gateURL).Msg("Failed to resolve magnet after all hops")
+	return ""
 }
 
 func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
