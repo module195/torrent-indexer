@@ -133,29 +133,60 @@ func resolveGateLink(ctx context.Context, i *Indexer, gateURL, referer string) s
 
 	content := string(body)
 
-	// Magnet direto no corpo
+	// 1. Magnet direto no corpo
 	if m := regexp.MustCompile(`magnet:\?[^"'\s<>]+`).FindString(content); m != "" {
+		logging.Debug().Str("gate", gateURL).Str("magnet", m[:min(40, len(m))]).Msg("Magnet found in body")
 		return m
 	}
 
-	// Tenta parsear como HTML e procurar magnet ou meta refresh
+	// 2. Parsear HTML
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
-	if err == nil {
-		if href, exists := doc.Find("a[href^='magnet:']").First().Attr("href"); exists {
-			return href
-		}
-		// Meta refresh
-		if content, exists := doc.Find("meta[http-equiv='refresh']").Attr("content"); exists {
-			if parts := strings.SplitN(content, "url=", 2); len(parts) == 2 {
-				redirect := strings.TrimSpace(parts[1])
-				if strings.HasPrefix(redirect, "magnet:") {
-					return redirect
-				}
+	if err != nil {
+		return ""
+	}
+
+	// 2a. Link magnet
+	if href, exists := doc.Find("a[href^='magnet:']").First().Attr("href"); exists && href != "" {
+		logging.Debug().Str("gate", gateURL).Msg("Magnet found in <a> tag")
+		return href
+	}
+
+	// 2b. Meta refresh
+	if meta, exists := doc.Find("meta[http-equiv='refresh'], meta[http-equiv='Refresh']").Attr("content"); exists {
+		if parts := strings.SplitN(strings.ToLower(meta), "url=", 2); len(parts) == 2 {
+			redirect := strings.TrimSpace(parts[1])
+			if strings.HasPrefix(redirect, "magnet:") {
+				logging.Debug().Str("gate", gateURL).Msg("Magnet found in meta refresh")
+				return redirect
 			}
 		}
 	}
 
+	// 2c. JavaScript window.location ou location.href
+	if m := regexp.MustCompile(`(?:window\.)?location(?:\.href)?\s*=\s*['"](magnet:[^'"]+)['"]`).FindStringSubmatch(content); len(m) > 1 {
+		logging.Debug().Str("gate", gateURL).Msg("Magnet found in JS location")
+		return m[1]
+	}
+
+	// 2d. data-magnet ou outros atributos comuns
+	if magnet, exists := doc.Find("[data-magnet], [data-href]").Attr("data-magnet"); exists && strings.HasPrefix(magnet, "magnet:") {
+		return magnet
+	}
+
+	logging.Debug().
+		Str("gate", gateURL).
+		Int("body_len", len(content)).
+		Str("body_sample", content[:min(300, len(content))]).
+		Msg("No magnet found in gate response")
+
 	return ""
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
