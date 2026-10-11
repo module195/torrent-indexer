@@ -93,11 +93,11 @@ func main() {
 	indexerMux.HandleFunc("/indexers/starck-filmes", indexers.HandlerStarckFilmesIndexer)
 	indexerMux.HandleFunc("/indexers/torrent-dos-filmes", indexers.HandlerTorrentDosFilmesIndexer)
 	indexerMux.HandleFunc("/indexers/vaca_torrent", indexers.HandlerVacaTorrentIndexer)
+	indexerMux.HandleFunc("/indexers/baixando_torrents_hd", indexers.HandlerBaixandoTorrentsHDIndexer)
 	indexerMux.HandleFunc("/indexers/manual", indexers.HandlerManualIndexer)
 	indexerMux.HandleFunc("/search", search.SearchTorrentHandler)
 	indexerMux.HandleFunc("/search/health", search.HealthHandler)
 	indexerMux.HandleFunc("/search/stats", search.StatsHandler)
-	indexerMux.HandleFunc("/indexers/baixando_torrents_hd", indexers.HandlerBaixandoTorrentsHDIndexer)
 	indexerMux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(public.UIFiles))))
 	loggedIndexerMux := logging.HTTPLoggingMiddleware(indexerMux)
 
