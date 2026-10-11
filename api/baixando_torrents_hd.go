@@ -39,7 +39,6 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
 
-	// URL encode query param
 	q = url.QueryEscape(q)
 	targetURL := metadata.URL
 
@@ -76,7 +75,6 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Collect only search result links (avoid "Mais acessados" section)
 	var links []string
 	seen := make(map[string]bool)
 
@@ -85,7 +83,6 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 		if !exists || href == "" || seen[href] {
 			return
 		}
-		// Skip non-content links
 		if strings.Contains(href, "/page/") || strings.Contains(href, "/category/") ||
 			strings.Contains(href, "/tag/") || strings.Contains(href, "/author/") {
 			return
@@ -94,18 +91,15 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 		links = append(links, href)
 	})
 
-	// if no links were indexed, expire the document in cache
 	if len(links) == 0 {
 		_ = i.requester.ExpireDocument(ctx, targetURL)
 		logging.DebugWithRequest(r).Str("url", targetURL).Msg("No links found, expiring cache")
 	}
 
-	// extract each torrent link
 	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
 		return getTorrentsBaixandoTorrentsHD(ctx, i, link, targetURL)
 	})
 
-	// Apply post-processors
 	postProcessedTorrents := indexedTorrents
 	for _, processor := range i.postProcessors {
 		postProcessedTorrents = processor(i, r, postProcessedTorrents)
@@ -129,7 +123,6 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 		return nil, err
 	}
 
-	// Title
 	title := strings.TrimSpace(doc.Find("h1.lyra-h1, h1, .entry-title").First().Text())
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("title").Text())
@@ -140,7 +133,6 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 		year = m[1]
 	}
 
-	// IMDb
 	imdbLink := ""
 	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
@@ -149,7 +141,6 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 		}
 	})
 
-	// Audio and size from ficha
 	var audio []schema.Audio
 	var size []string
 	doc.Find(".lyra-ficha li, .lyra-rel-idioma, .lyra-rel-info").Each(func(_ int, s *goquery.Selection) {
@@ -162,24 +153,18 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 	})
 	size = utils.StableUniq(size)
 
-	// Collect magnet links (direct) and gate links
 	var magnetLinks []string
-
-	// Direct magnets
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists && href != "" {
 			magnetLinks = append(magnetLinks, href)
 		}
 	})
 
-	// Gate links (lyra-baixar) — currently not resolved automatically
-	// The site uses a multi-step gate. Direct magnets are preferred.
-	// If needed in the future, a gate resolver can be added here.
+	// Gate links are currently not resolved automatically
 	if len(magnetLinks) == 0 {
 		doc.Find("a.lyra-baixar[href], a[href*='/gate/go/']").Each(func(_ int, s *goquery.Selection) {
 			if href, exists := s.Attr("href"); exists && href != "" {
 				logging.Debug().Str("gate_link", href).Msg("Found gate link (not resolved)")
-				// Optionally append if you implement a gate resolver later
 			}
 		})
 	}
@@ -210,6 +195,7 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
 			if err != nil {
 				logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to get leechers and seeders")
+				peer, seed = 0, 0
 			}
 
 			processedTitle := processTitle(title, magnetAudio)
