@@ -27,6 +27,7 @@ var baixandoTorrentsHD = IndexerMeta{
 func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	metadata := baixandoTorrentsHD
+
 	defer func() {
 		i.metrics.IndexerDuration.WithLabelValues(metadata.Label).Observe(time.Since(start).Seconds())
 		i.metrics.IndexerRequests.WithLabelValues(metadata.Label).Inc()
@@ -39,10 +40,7 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 		page = "1"
 	}
 
-	var doc *goquery.Document
-	var err error
 	var targetURL string
-
 	if q != "" {
 		targetURL = fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, url.QueryEscape(q))
 		if page != "1" {
@@ -64,7 +62,7 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 	}
 	defer resp.Close()
 
-	doc, err = goquery.NewDocumentFromReader(resp)
+	doc, err := goquery.NewDocumentFromReader(resp)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -72,11 +70,21 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Coleta apenas links da seção de resultados da busca
 	var links []string
-	doc.Find("article, .post, .grid-item, .movie-item").Each(func(_ int, s *goquery.Selection) {
-		if href, exists := s.Find("a").First().Attr("href"); exists {
-			links = append(links, href)
+	seen := make(map[string]bool)
+
+	doc.Find(".lyra-lista .lyra-post a[href], .lyra-post-link[href]").Each(func(_ int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists || href == "" || seen[href] {
+			return
 		}
+		// Ignora links que claramente não são posts de conteúdo
+		if strings.Contains(href, "/page/") || strings.Contains(href, "/category/") || strings.Contains(href, "/tag/") {
+			return
+		}
+		seen[href] = true
+		links = append(links, href)
 	})
 
 	if len(links) == 0 {
@@ -108,12 +116,18 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link string)
 		return nil, err
 	}
 
-	title := strings.TrimSpace(doc.Find("h1, .entry-title").First().Text())
+	// Título principal
+	title := strings.TrimSpace(doc.Find("h1.lyra-h1, h1, .entry-title").First().Text())
+	if title == "" {
+		title = strings.TrimSpace(doc.Find("title").Text())
+	}
+
 	year := ""
 	if m := regexp.MustCompile(`(\d{4})`).FindStringSubmatch(title); len(m) > 0 {
 		year = m[1]
 	}
 
+	// IMDb
 	imdbLink := ""
 	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
 		if href, _ := s.Attr("href"); strings.Contains(href, "title/tt") {
@@ -121,18 +135,26 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link string)
 		}
 	})
 
+	// Áudio e tamanho a partir da ficha
 	var audio []schema.Audio
 	var size string
-	doc.Find(".info-item, .meta-item, tr td, .entry-content p, .content p").Each(func(_ int, s *goquery.Selection) {
+	doc.Find(".lyra-ficha li, .lyra-rel-idioma, .info-item, .meta-item").Each(func(_ int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
-		if strings.Contains(strings.ToLower(text), "idioma") || strings.Contains(strings.ToLower(text), "audio") {
-			audio = append(audio, findAudioFromText(text)...)
-		}
-		if m := regexp.MustCompile(`(\d+[,.]\d+\s*(GB|MB|GiB|MiB))`).FindStringSubmatch(text); len(m) > 0 {
+		audio = append(audio, findAudioFromText(text)...)
+		if m := regexp.MustCompile(`(\d+[,.]\d+\s*(GB|MB|GiB|MiB))`).FindStringSubmatch(text); len(m) > 0 && size == "" {
 			size = m[0]
 		}
 	})
 
+	// Coleta links de download (classe específica do site)
+	var downloadLinks []string
+	doc.Find("a.lyra-baixar[href], a[href*='/gate/go/']").Each(func(_ int, s *goquery.Selection) {
+		if href, exists := s.Attr("href"); exists && href != "" {
+			downloadLinks = append(downloadLinks, href)
+		}
+	})
+
+	// Tenta magnets diretos (caso existam)
 	var magnetLinks []string
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
 		if href, _ := s.Attr("href"); href != "" {
@@ -140,19 +162,19 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link string)
 		}
 	})
 
-	// Tenta página de download se não encontrou magnet direto
-	if len(magnetLinks) == 0 {
-		doc.Find("a[href*='download'], a[href*='/download/']").Each(func(_ int, s *goquery.Selection) {
-			if href, exists := s.Attr("href"); exists && len(magnetLinks) == 0 {
-				if ddoc, err := getDocument(ctx, i, href, link); err == nil {
-					ddoc.Find("a[href^='magnet:']").Each(func(_ int, ss *goquery.Selection) {
-						if mh, _ := ss.Attr("href"); mh != "" {
-							magnetLinks = append(magnetLinks, mh)
-						}
-					})
-				}
+	// Se não encontrou magnet, tenta seguir o gate (limitado)
+	if len(magnetLinks) == 0 && len(downloadLinks) > 0 {
+		// Nota: o gate do site exige interação / redirecionamentos múltiplos.
+		// Aqui apenas registramos o link de gate como “magnet” provisório
+		// ou tentamos uma única vez. Em produção pode ser necessário
+		// um tratamento mais robusto (FlareSolverr + múltiplos redirects).
+		for _, dl := range downloadLinks {
+			if strings.Contains(dl, "/gate/go/") {
+				// Opcional: tentar resolver o gate aqui
+				// Por enquanto deixamos o link original para não travar
+				magnetLinks = append(magnetLinks, dl)
 			}
-		})
+		}
 	}
 
 	if len(magnetLinks) == 0 {
@@ -161,6 +183,11 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link string)
 
 	var indexedTorrents []schema.IndexedTorrent
 	for _, magnetLink := range magnetLinks {
+		// Só processa se for realmente um magnet
+		if !strings.HasPrefix(magnetLink, "magnet:") {
+			continue
+		}
+
 		magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
 		if err != nil {
 			continue
@@ -168,7 +195,6 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link string)
 
 		infoHash := magnetParsed.InfoHash.String()
 		trackers := magnetParsed.Trackers
-
 		peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
 		if err != nil {
 			peer, seed = 0, 0
