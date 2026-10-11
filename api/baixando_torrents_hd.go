@@ -1,4 +1,4 @@
-package indexers
+package handler
 
 import (
     "net/http"
