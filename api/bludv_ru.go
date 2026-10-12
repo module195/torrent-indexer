@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,11 +28,11 @@ var bludvRu = IndexerMeta{
 
 func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	ctx := r.Context()
 	defer func() {
 		i.metrics.IndexerDuration.WithLabelValues("bludv_ru").Observe(time.Since(start).Seconds())
 	}()
 
+	ctx := r.Context()
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
 	if page == "" {
@@ -66,24 +67,27 @@ func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) 
 	links := extractBludvRuLinks(doc)
 	if len(links) == 0 {
 		logging.Info().Str("url", targetURL).Msg("No links found")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"results": []schema.IndexedTorrent{},
-			"count":   0,
+		_ = json.NewEncoder(w).Encode(Response{
+			Results: []schema.IndexedTorrent{},
+			Count:   0,
 		})
 		return
 	}
 
-	results := utils.ParallelFlatMap(links, 10, func(link string) []schema.IndexedTorrent {
+	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
 		return getTorrentsBludvRu(ctx, i, link)
 	})
 
-	results = i.postProcess(ctx, results)
+	postProcessedTorrents := indexedTorrents
+	for _, processor := range i.postProcessors {
+		postProcessedTorrents = processor(i, r, postProcessedTorrents)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"results":       results,
-		"count":         len(results),
-		"indexed_count": len(links),
+	_ = json.NewEncoder(w).Encode(Response{
+		Results:      postProcessedTorrents,
+		Count:        len(postProcessedTorrents),
+		IndexedCount: len(indexedTorrents),
 	})
 }
 
@@ -91,7 +95,7 @@ func extractBludvRuLinks(doc *goquery.Document) []string {
 	seen := make(map[string]bool)
 	var links []string
 
-	doc.Find(".post .title a[href]").Each(func(i int, s *goquery.Selection) {
+	doc.Find(".post .title a[href]").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if !exists || href == "" {
 			return
@@ -114,11 +118,10 @@ func extractBludvRuLinks(doc *goquery.Document) []string {
 	return links
 }
 
-func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) []schema.IndexedTorrent {
+func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.IndexedTorrent, error) {
 	doc, err := getDocument(ctx, i, link, bludvRu.URL)
 	if err != nil {
-		logging.Error().Err(err).Str("url", link).Msg("Failed to get details page")
-		return nil
+		return nil, err
 	}
 
 	title := strings.TrimSpace(doc.Find("h1, .title, .entry-title").First().Text())
@@ -126,75 +129,104 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) []schema.I
 		title = strings.TrimSpace(doc.Find("title").Text())
 	}
 
-	year := findYearFromText(title, title)
-	if year == "" {
-		year = findYearFromText(doc.Find(".conteudo, .entry-content, article, .post").Text(), title)
+	year := ""
+	if m := regexp.MustCompile(`(\d{4})`).FindStringSubmatch(title); len(m) > 0 {
+		year = m[1]
 	}
 
-	var imdbLink string
-	doc.Find("a[href*='imdb.com']").EachWithBreak(func(i int, s *goquery.Selection) bool {
+	imdbLink := ""
+	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
-		if href != "" {
-			imdbLink, _ = getIMDBLink(href)
-			return false
+		if imdb, err := getIMDBLink(href); err == nil {
+			imdbLink = imdb
 		}
-		return true
 	})
 
-	contentText := doc.Find(".conteudo, .entry-content, article, .post-content, .post").Text()
-	audioFromContent := findAudioFromText(contentText)
-	sizes := utils.StableUniq(findSizesFromText(contentText))
+	var audio []schema.Audio
+	var size []string
+	doc.Find(".conteudo p, .entry-content p, article p, .post p").Each(func(_ int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		audio = append(audio, findAudioFromText(text)...)
+		size = append(size, findSizesFromText(text)...)
+		if y := findYearFromText(text, title); y != "" && year == "" {
+			year = y
+		}
+	})
+	size = utils.StableUniq(size)
+
+	var magnetLinks []string
+	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
+		if href, exists := s.Attr("href"); exists && href != "" {
+			href = strings.ReplaceAll(href, "&", "&")
+			magnetLinks = append(magnetLinks, href)
+		}
+	})
+
+	magnetLinks = utils.StableUniq(magnetLinks)
+	if len(magnetLinks) == 0 {
+		return nil, nil
+	}
 
 	date := getPublishedDateFromMeta(doc)
+	var indexedTorrents []schema.IndexedTorrent
+	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
-	// Extract direct magnets
-	var magnets []string
-	doc.Find("a[href^='magnet:']").Each(func(i int, s *goquery.Selection) {
-		href, _ := s.Attr("href")
-		if href != "" {
-			// Clean HTML entities
-			href = strings.ReplaceAll(href, "&", "&")
-			magnets = append(magnets, href)
-		}
-	})
+	for it, magnetLink := range magnetLinks {
+		it := it
+		go func(it int, magnetLink string) {
+			magnetLink = strings.TrimSpace(magnetLink)
+			magnetLink = strings.ReplaceAll(magnetLink, "\n", "")
+			magnetLink = strings.ReplaceAll(magnetLink, "\r", "")
+			magnetLink = strings.ReplaceAll(magnetLink, "&", "&")
 
-	magnets = utils.StableUniq(magnets)
-	if len(magnets) == 0 {
-		return nil
+			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+			if err != nil {
+				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+				chanIndexedTorrent <- schema.IndexedTorrent{}
+				return
+			}
+
+			releaseTitle := magnetParsed.DisplayName
+			infoHash := magnetParsed.InfoHash.String()
+			trackers := magnetParsed.Trackers
+
+			magnetAudio := getAudioFromTitle(releaseTitle, audio)
+
+			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
+			if err != nil {
+				peer, seed = 0, 0
+			}
+
+			var mySize string
+			if it < len(size) {
+				mySize = size[it]
+			}
+
+			ixt := schema.IndexedTorrent{
+				Title:         releaseTitle,
+				OriginalTitle: title,
+				Details:       link,
+				Year:          year,
+				IMDB:          imdbLink,
+				Audio:         magnetAudio,
+				MagnetLink:    magnetLink,
+				Date:          date,
+				InfoHash:      infoHash,
+				Trackers:      trackers,
+				LeechCount:    peer,
+				SeedCount:     seed,
+				Size:          mySize,
+			}
+			chanIndexedTorrent <- ixt
+		}(it, magnetLink)
 	}
 
-	var results []schema.IndexedTorrent
-	for idx, magLink := range magnets {
-		parsed, err := magnet.ParseMagnetUri(magLink)
-		if err != nil {
-			logging.Warn().Err(err).Str("magnet", magLink).Msg("Failed to parse magnet")
-			continue
+	for i := 0; i < len(magnetLinks); i++ {
+		it := <-chanIndexedTorrent
+		if it.InfoHash != "" {
+			indexedTorrents = append(indexedTorrents, it)
 		}
-
-		audio := getAudioFromTitle(parsed.DisplayName, audioFromContent)
-		size := ""
-		if idx < len(sizes) {
-			size = sizes[idx]
-		}
-
-		leech, seed := goscrape.GetLeechsAndSeeds(parsed.InfoHash)
-
-		results = append(results, schema.IndexedTorrent{
-			Title:         parsed.DisplayName,
-			OriginalTitle: title,
-			Details:       link,
-			Year:          year,
-			IMDB:          imdbLink,
-			Audio:         audio,
-			MagnetLink:    magLink,
-			Date:          date,
-			InfoHash:      parsed.InfoHash,
-			Trackers:      parsed.Trackers,
-			LeechCount:    leech,
-			SeedCount:     seed,
-			Size:          size,
-		})
 	}
 
-	return results
+	return indexedTorrents, nil
 }
