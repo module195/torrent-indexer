@@ -212,52 +212,52 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
     magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
     magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
 
-    magnet, err := magnet.ParseMagnetUri(magnetLink)
+    magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
     if err != nil {
         logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-        return // ou continue sem quebrar
+        return
     }
 
-			releaseTitle := magnetParsed.DisplayName
-			infoHash := magnetParsed.InfoHash.String()
-			trackers := magnetParsed.Trackers
-			magnetAudio := getAudioFromTitle(releaseTitle, audio)
+    releaseTitle := magnetParsed.DisplayName
+    infoHash := magnetParsed.InfoHash.String()
+    trackers := magnetParsed.Trackers
+    magnetAudio := getAudioFromTitle(releaseTitle, audio)
 
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
-			if err != nil {
-				peer, seed = 0, 0
-			}
+    peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
+    if err != nil {
+        peer, seed = 0, 0
+    }
 
-			processedTitle := processTitle(title, magnetAudio)
+    processedTitle := processTitle(title, magnetAudio)
 
-			var mySize string
-			if len(sizes) == len(magnetLinks) {
-				mySize = sizes[it]
-			}
+    var mySize string
+    if len(sizes) == len(magnetLinks) {
+        mySize = sizes[it]
+    }
 
-			if mySize == "" && i.magnetMetadataAPI != nil {
-				go func() {
-					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
-				}()
-			}
+    if mySize == "" && i.magnetMetadataAPI != nil {
+        go func() {
+            _, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
+        }()
+    }
 
-			ixt := schema.IndexedTorrent{
-				Title:         releaseTitle,
-				OriginalTitle: processedTitle,
-				Details:       link,
-				Year:          year,
-				IMDB:          imdbLink,
-				Audio:         magnetAudio,
-				MagnetLink:    magnetLink,
-				Date:          date,
-				InfoHash:      infoHash,
-				Trackers:      trackers,
-				LeechCount:    peer,
-				SeedCount:     seed,
-				Size:          mySize,
-			}
-			chanIndexedTorrent <- ixt
-		}(it, magnetLink)
+    ixt := schema.IndexedTorrent{
+        Title:         releaseTitle,
+        OriginalTitle: processedTitle,
+        Details:       link,
+        Year:          year,
+        IMDB:          imdbLink,
+        Audio:         magnetAudio,
+        MagnetLink:    magnetLink,
+        Date:          date,
+        InfoHash:      infoHash,
+        Trackers:      trackers,
+        LeechCount:    peer,
+        SeedCount:     seed,
+        Size:          mySize,
+    }
+    chanIndexedTorrent <- ixt
+}(it, magnetLink)
 	}
 
 	for range magnetLinks {
