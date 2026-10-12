@@ -189,10 +189,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	for it, magnetLink := range magnetLinks {
 		it := it
 		go func(it int, magnetLink string) {
-			magnetLink = strings.TrimSpace(magnetLink)
-			magnetLink = strings.ReplaceAll(magnetLink, "\n", "")
-			magnetLink = strings.ReplaceAll(magnetLink, "\r", "")
-			magnetLink = strings.ReplaceAll(magnetLink, "&", "&")
+			magnetLink = normalizeMagnet(magnetLink)
 
 			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
 			if err != nil {
@@ -248,6 +245,17 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 
 var magnetRegex = regexp.MustCompile(`magnet:\?[^"'\s<>]+`)
 
+func normalizeMagnet(mag string) string {
+	mag = strings.TrimSpace(mag)
+	mag = strings.ReplaceAll(mag, "&", "&")
+	mag = strings.ReplaceAll(mag, "\n", "")
+	mag = strings.ReplaceAll(mag, "\r", "")
+	// Fix missing colon in urn:btih: (goquery strips it)
+	mag = regexp.MustCompile(`xt=urnbtih`).ReplaceAllString(mag, "xt=urn:btih:")
+	mag = regexp.MustCompile(`xt=urn:btih([^:])`).ReplaceAllString(mag, "xt=urn:btih:$1")
+	return mag
+}
+
 func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 	doc, err := getDocument(ctx, i, linkURL, torrentFilmesHDs.URL)
 	if err != nil {
@@ -262,9 +270,7 @@ func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 
 	matches := magnetRegex.FindAllString(html, -1)
 	if len(matches) > 0 {
-		mag := matches[0]
-		mag = strings.ReplaceAll(mag, "&", "&")
-		return mag
+		return normalizeMagnet(matches[0])
 	}
 
 	return ""
