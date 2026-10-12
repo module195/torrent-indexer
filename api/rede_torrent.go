@@ -204,10 +204,16 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 	for it, magnetLink := range magnetLinks {
 		it := it
 		go func(it int, magnetLink string) {
-			magnet, err := magnet.ParseMagnetUri(magnetLink)
-			if err != nil {
-				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-			}
+    // Limpa espaço comum em magnets malformados
+    magnetLink = strings.TrimSpace(magnetLink)
+    magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
+    magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
+
+    magnet, err := magnet.ParseMagnetUri(magnetLink)
+    if err != nil {
+        logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+        return // ou continue sem quebrar
+    }
 			releaseTitle := magnet.DisplayName
 			infoHash := magnet.InfoHash.String()
 			trackers := magnet.Trackers
