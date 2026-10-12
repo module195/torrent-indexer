@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -35,6 +36,16 @@ func (i *Indexer) HandlerBluDVIndexer(w http.ResponseWriter, r *http.Request) {
 		i.metrics.IndexerRequests.WithLabelValues(metadata.Label).Inc()
 	}()
 
+	// Desativa o indexer se a variável estiver definida
+	if os.Getenv("INDEXER_BLUDV_DISABLED") == "true" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Response{
+			Results: []schema.IndexedTorrent{},
+			Count:   0,
+		})
+		return
+	}
+
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
@@ -49,6 +60,7 @@ func (i *Indexer) HandlerBluDVIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logging.InfoWithRequest(r).Str("target_url", targetURL).Msg("Processing indexer request")
+
 	resp, err := i.requester.GetDocument(ctx, targetURL)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -95,7 +107,6 @@ func (i *Indexer) HandlerBluDVIndexer(w http.ResponseWriter, r *http.Request) {
 }
 
 func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
-	var indexedTorrents []schema.IndexedTorrent
 	doc, err := getDocument(ctx, i, link, referer)
 	if err != nil {
 		return nil, err
@@ -123,6 +134,7 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 		"https://promobr.online",
 		"https://valedesconto.shop",
 	}
+
 	for _, domain := range adwareDomains {
 		textContent.Find(fmt.Sprintf("a[href^='%s']", domain)).Each(func(_ int, s *goquery.Selection) {
 			href, _ := s.Attr("href")
@@ -160,13 +172,15 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 		}
 	})
 
+	magnetLinks = utils.StableUniq(magnetLinks)
+
 	if len(magnetLinks) == 0 {
 		return nil, nil
 	}
 
 	var audio []schema.Audio
 	var year string
-	var size []string
+	var sizes []string
 
 	article.Find("div.content p").Each(func(_ int, s *goquery.Selection) {
 		text := s.Text()
@@ -174,9 +188,9 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 		if y := findYearFromText(text, title); y != "" {
 			year = y
 		}
-		size = append(size, findSizesFromText(text)...)
+		sizes = append(sizes, findSizesFromText(text)...)
 	})
-	size = utils.StableUniq(size)
+	sizes = utils.StableUniq(sizes)
 
 	imdbLink := ""
 	article.Find("div.content a").Each(func(_ int, s *goquery.Selection) {
@@ -187,7 +201,8 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 		}
 	})
 
-	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
+	var indexedTorrents []schema.IndexedTorrent
+	chanIndexedTorrent := make(chan schema.IndexedTorrent)
 
 	for it, magnetLink := range magnetLinks {
 		it := it
@@ -212,9 +227,10 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 			processedTitle := processTitle(title, magnetAudio)
 
 			var mySize string
-			if len(size) == len(magnetLinks) {
-				mySize = size[it]
+			if len(sizes) == len(magnetLinks) {
+				mySize = sizes[it]
 			}
+
 			if mySize == "" && i.magnetMetadataAPI != nil {
 				go func() {
 					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
@@ -240,7 +256,7 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 		}(it, magnetLink)
 	}
 
-	for i := 0; i < len(magnetLinks); i++ {
+	for range magnetLinks {
 		it := <-chanIndexedTorrent
 		if it.InfoHash != "" {
 			indexedTorrents = append(indexedTorrents, it)
@@ -251,15 +267,13 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
 }
 
 // resolveBluDVGate tenta extrair o magnet a partir do link /gate/go/
-// Estratégia experimental: busca o parâmetro u= ou id e tenta DecodeAdLink.
-// Também procura magnets no HTML da página de gate.
 func resolveBluDVGate(ctx context.Context, i *Indexer, gateURL, referer string) (string, error) {
 	doc, err := getDocument(ctx, i, gateURL, referer)
 	if err != nil {
 		return "", err
 	}
 
-	// 1. Procurar magnet direto na página do gate
+	// 1. Magnet direto na página do gate
 	var found string
 	doc.Find("a[href^='magnet']").Each(func(_ int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists && found == "" {
@@ -270,7 +284,7 @@ func resolveBluDVGate(ctx context.Context, i *Indexer, gateURL, referer string) 
 		return found, nil
 	}
 
-	// 2. Procurar links promobr.online e extrair o parâmetro u=
+	// 2. Links promobr.online → parâmetro u=
 	doc.Find("a[href*='promobr.online']").Each(func(_ int, s *goquery.Selection) {
 		if found != "" {
 			return
@@ -284,7 +298,6 @@ func resolveBluDVGate(ctx context.Context, i *Indexer, gateURL, referer string) 
 		if u == "" {
 			return
 		}
-		// Tenta decode no u=
 		decoded, err := utils.DecodeAdLink(u)
 		if err == nil && strings.HasPrefix(decoded, "magnet:") {
 			found = decoded
@@ -294,7 +307,7 @@ func resolveBluDVGate(ctx context.Context, i *Indexer, gateURL, referer string) 
 		return found, nil
 	}
 
-	// 3. Procurar qualquer link com parâmetro id= e tentar decode
+	// 3. Qualquer link com parâmetro id= e DecodeAdLink
 	doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
 		if found != "" {
 			return
@@ -314,7 +327,7 @@ func resolveBluDVGate(ctx context.Context, i *Indexer, gateURL, referer string) 
 		}
 	})
 
-	// 4. Regex no HTML bruto por magnet:
+	// 4. Regex no HTML bruto
 	if found == "" {
 		html, _ := doc.Html()
 		if m := regexp.MustCompile(`magnet:\?xt=urn:btih:[a-zA-Z0-9]+`).FindString(html); m != "" {
