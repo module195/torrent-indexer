@@ -21,7 +21,7 @@ import (
 
 var viaFilmes = IndexerMeta{
 	Label:       "via_filmes",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_VIA_FILMES_URL", "https://viafilmes.com/"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_VIA_FILMES_URL", "https://viatorrent.site"),
 	SearchURL:   "?s=",
 	PagePattern: "page/%s/",
 }
