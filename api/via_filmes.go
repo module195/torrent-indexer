@@ -160,19 +160,18 @@ func getTorrentsViaFilmes(ctx context.Context, i *Indexer, link, referer string)
 	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
 	for it, magnetLink := range magnetLinks {
-		it := it
-		go func(it int, magnetLink string) {
-			// Limpa espaço comum em magnets malformados
-			magnetLink = strings.TrimSpace(magnetLink)
-			magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
-			magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
+    it := it
+    go func(it int, magnetLink string) {
+        magnetLink = strings.TrimSpace(magnetLink)
+        magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
+        magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
 
-			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
-			if err != nil {
-				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-				return
-			}
-
+        magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+        if err != nil {
+            logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+            chanIndexedTorrent <- schema.IndexedTorrent{} // envia vazio para não travar
+            return
+        }
 			releaseTitle := magnetParsed.DisplayName
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
