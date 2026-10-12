@@ -1,5 +1,5 @@
 FROM golang:1.24 AS builder
-
+ARG CACHE_BUST=1
 WORKDIR /go/src/app
 COPY . .
 
