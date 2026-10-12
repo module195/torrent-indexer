@@ -38,10 +38,9 @@ func (i *Indexer) HandlerViaFilmesIndexer(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
-
 	q = url.QueryEscape(q)
-	targetURL := metadata.URL
 
+	targetURL := metadata.URL
 	if q != "" {
 		targetURL = fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, q)
 		if page != "" && page != "1" {
@@ -52,6 +51,7 @@ func (i *Indexer) HandlerViaFilmesIndexer(w http.ResponseWriter, r *http.Request
 	}
 
 	logging.InfoWithRequest(r).Str("target_url", targetURL).Msg("Processing indexer request")
+
 	resp, err := i.requester.GetDocument(ctx, targetURL)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -79,7 +79,7 @@ func (i *Indexer) HandlerViaFilmesIndexer(w http.ResponseWriter, r *http.Request
 		}
 		if strings.Contains(href, "/page/") || strings.Contains(href, "/category/") ||
 			strings.Contains(href, "/tag/") || strings.Contains(href, "/author/") ||
-			strings.HasSuffix(href, "/") && strings.Count(href, "/") <= 3 {
+			(strings.HasSuffix(href, "/") && strings.Count(href, "/") <= 3) {
 			return
 		}
 		seen[href] = true
@@ -109,6 +109,7 @@ func (i *Indexer) HandlerViaFilmesIndexer(w http.ResponseWriter, r *http.Request
 
 func getTorrentsViaFilmes(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
 	var indexedTorrents []schema.IndexedTorrent
+
 	doc, err := getDocument(ctx, i, link, referer)
 	if err != nil {
 		return nil, err
@@ -156,26 +157,26 @@ func getTorrentsViaFilmes(ctx context.Context, i *Indexer, link, referer string)
 	}
 
 	date := getPublishedDateFromMeta(doc)
-
 	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
 	for it, magnetLink := range magnetLinks {
 		it := it
 		go func(it int, magnetLink string) {
-    // Limpa espaço comum em magnets malformados
-    magnetLink = strings.TrimSpace(magnetLink)
-    magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
-    magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
+			// Limpa espaço comum em magnets malformados
+			magnetLink = strings.TrimSpace(magnetLink)
+			magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
+			magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
 
-    magnet, err := magnet.ParseMagnetUri(magnetLink)
-    if err != nil {
-        logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-        return // ou continue sem quebrar
-    }
+			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+			if err != nil {
+				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+				return
+			}
 
 			releaseTitle := magnetParsed.DisplayName
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
+
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
 
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
