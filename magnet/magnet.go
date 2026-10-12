@@ -24,6 +24,12 @@ var ParseMagnetURI = ParseMagnetUri
 
 // ParseMagnetUri parses Magnet-formatted URIs into a Magnet instance
 func ParseMagnetUri(uri string) (m Magnet, err error) {
+	// Normaliza magnets malformados dos sites BR
+	uri = strings.TrimSpace(uri)
+	uri = strings.ReplaceAll(uri, "magnet:xt=", "magnet:?xt=")
+	uri = strings.ReplaceAll(uri, "magnet:? ", "magnet:?")
+	uri = strings.ReplaceAll(uri, "magnet:?xt=", "magnet:?xt=")
+
 	u, err := url.Parse(uri)
 	if err != nil {
 		err = fmt.Errorf("error parsing uri: %w", err)
