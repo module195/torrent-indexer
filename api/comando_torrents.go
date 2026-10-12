@@ -20,7 +20,7 @@ import (
 
 var comando = IndexerMeta{
 	Label:       "comando",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_COMANDO_URL", "https://comando.la/"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_COMANDO_URL", "https://comando1.com/"),
 	SearchURL:   "?s=",
 	PagePattern: "page/%s",
 }
