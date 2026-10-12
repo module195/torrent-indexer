@@ -159,67 +159,72 @@ func getTorrentsViaFilmes(ctx context.Context, i *Indexer, link, referer string)
 	date := getPublishedDateFromMeta(doc)
 	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
-	for it, magnetLink := range magnetLinks {
+for it, magnetLink := range magnetLinks {
     it := it
     go func(it int, magnetLink string) {
+        // Normalização mais agressiva
         magnetLink = strings.TrimSpace(magnetLink)
+        magnetLink = strings.ReplaceAll(magnetLink, "\n", "")
+        magnetLink = strings.ReplaceAll(magnetLink, "\r", "")
         magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
         magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
+        magnetLink = strings.ReplaceAll(magnetLink, "magnet:%3F", "magnet:?")
 
         magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
         if err != nil {
             logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-            chanIndexedTorrent <- schema.IndexedTorrent{} // envia vazio para não travar
+            chanIndexedTorrent <- schema.IndexedTorrent{}
             return
         }
-			releaseTitle := magnetParsed.DisplayName
-			infoHash := magnetParsed.InfoHash.String()
-			trackers := magnetParsed.Trackers
 
-			magnetAudio := getAudioFromTitle(releaseTitle, audio)
+        releaseTitle := magnetParsed.DisplayName
+        infoHash := magnetParsed.InfoHash.String()
+        trackers := magnetParsed.Trackers
 
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
-			if err != nil {
-				peer, seed = 0, 0
-			}
+        magnetAudio := getAudioFromTitle(releaseTitle, audio)
 
-			processedTitle := processTitle(title, magnetAudio)
+        peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
+        if err != nil {
+            peer, seed = 0, 0
+        }
 
-			var mySize string
-			if len(size) == len(magnetLinks) {
-				mySize = size[it]
-			}
-			if mySize == "" && i.magnetMetadataAPI != nil {
-				go func() {
-					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
-				}()
-			}
+        processedTitle := processTitle(title, magnetAudio)
 
-			ixt := schema.IndexedTorrent{
-				Title:         releaseTitle,
-				OriginalTitle: processedTitle,
-				Details:       link,
-				Year:          year,
-				IMDB:          imdbLink,
-				Audio:         magnetAudio,
-				MagnetLink:    magnetLink,
-				Date:          date,
-				InfoHash:      infoHash,
-				Trackers:      trackers,
-				LeechCount:    peer,
-				SeedCount:     seed,
-				Size:          mySize,
-			}
-			chanIndexedTorrent <- ixt
-		}(it, magnetLink)
-	}
+        var mySize string
+        if it < len(size) {
+            mySize = size[it]
+        }
+        if mySize == "" && i.magnetMetadataAPI != nil {
+            go func() {
+                _, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
+            }()
+        }
 
-	for i := 0; i < len(magnetLinks); i++ {
-		it := <-chanIndexedTorrent
-		if it.InfoHash != "" {
-			indexedTorrents = append(indexedTorrents, it)
-		}
-	}
+        ixt := schema.IndexedTorrent{
+            Title:         releaseTitle,
+            OriginalTitle: processedTitle,
+            Details:       link,
+            Year:          year,
+            IMDB:          imdbLink,
+            Audio:         magnetAudio,
+            MagnetLink:    magnetLink,
+            Date:          date,
+            InfoHash:      infoHash,
+            Trackers:      trackers,
+            LeechCount:    peer,
+            SeedCount:     seed,
+            Size:          mySize,
+        }
+        chanIndexedTorrent <- ixt
+    }(it, magnetLink)
+}
+
+for i := 0; i < len(magnetLinks); i++ {
+    it := <-chanIndexedTorrent
+    if it.InfoHash != "" {
+        indexedTorrents = append(indexedTorrents, it)
+    }
+}
 
 	return indexedTorrents, nil
 }
