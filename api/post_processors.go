@@ -127,6 +127,10 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	// Extract episode info from query (e.g. s01e05)
 	epRegex := regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
 	qEpisode := epRegex.FindString(qNorm)
+	
+	// Query without episode for title matching
+	qTitle := epRegex.ReplaceAllString(qNorm, "")
+	qTitle = strings.TrimSpace(qTitle)
 
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
@@ -141,14 +145,17 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		splitLength := 2
 		sim := edlib.JaccardSimilarity(combined, qNorm, splitLength)
 		
-		// Boost if query matches the main title
-		if strings.Contains(combined, qNorm) || strings.HasPrefix(combined, qNorm) {
-			// If query has episode info, only boost if title matches that episode
+		// Check if main title matches (without episode)
+		titleMatches := strings.Contains(combined, qTitle) || strings.HasPrefix(combined, qTitle) || strings.Contains(qTitle, combined)
+		
+		if titleMatches {
 			if qEpisode != "" {
+				// Query has episode: boost only if title has that episode
 				if strings.Contains(titleNorm, qEpisode) {
 					sim = max(sim, 0.5)
 				}
 			} else {
+				// No episode in query: boost all matching titles
 				sim = max(sim, 0.5)
 			}
 		}
@@ -159,7 +166,6 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	// Filter low similarity
 	if q != "" {
 		threshold := 0.05
-		// If query has episode info, require higher threshold for non-matching episodes
 		if qEpisode != "" {
 			threshold = 0.25
 		}
