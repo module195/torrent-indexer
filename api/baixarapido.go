@@ -204,7 +204,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	bodyText := doc.Text()
 	audio := findAudioFromText(h1 + " " + bodyText)
 
-	// Size
+	// Size: tenta do texto, senão do magnet xl=
 	sizeRe := regexp.MustCompile(`(\d+(?:[.,]\d+)?\s*(?:GB|MB|TB))`)
 	size := sizeRe.FindString(bodyText)
 
@@ -237,6 +237,21 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			releaseTitle = h1
 		}
 
+		// Size do magnet xl= se não encontrou no texto
+		mySize := size
+		if mySize == "" {
+			if xl := regexp.MustCompile(`[?&]xl=(\d+)`).FindStringSubmatch(magnetLink); len(xl) > 1 {
+				if bytes, err := strconv.ParseInt(xl[1], 10, 64); err == nil && bytes > 0 {
+					gb := float64(bytes) / (1024 * 1024 * 1024)
+					if gb >= 1 {
+						mySize = fmt.Sprintf("%.2f GB", gb)
+					} else {
+						mySize = fmt.Sprintf("%.0f MB", float64(bytes)/(1024*1024))
+					}
+				}
+			}
+		}
+
 		// Scrape seeders
 		seed, leech := 0, 0
 		if peer, s, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, magnetParsed.InfoHash.String(), magnetParsed.Trackers); err == nil {
@@ -255,7 +270,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			Date:          date,
 			InfoHash:      magnetParsed.InfoHash.String(),
 			Trackers:      magnetParsed.Trackers,
-			Size:          size,
+			Size:          mySize,
 			SeedCount:     seed,
 			LeechCount:    leech,
 		})
