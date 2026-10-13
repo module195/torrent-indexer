@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DefaultExpiration      = 24 * time.Hour * 7 // 7 days
+	DefaultExpiration      = 24 * time.Hour * 1 // 7 days
 	IndexerComandoTorrents = "indexer:comando_torrents"
 )
 
