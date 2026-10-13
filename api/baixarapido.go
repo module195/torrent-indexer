@@ -43,12 +43,16 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 
 	var targetURL string
 	if q != "" {
-		targetURL = baixarapido.URL + baixarapido.SearchURL + url.PathEscape(q) + "/"
+		// Remove trailing slash do base e leading slash do SearchURL para evitar //
+		base := strings.TrimRight(baixarapido.URL, "/")
+		// O site usa + para espaços
+		encoded := strings.ReplaceAll(url.PathEscape(q), "%20", "+")
+		targetURL = base + "/pesquisa/" + encoded + "/"
 		if page != "1" {
-			targetURL = baixarapido.URL + fmt.Sprintf(baixarapido.PagePattern, url.PathEscape(q), page)
+			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", encoded, page)
 		}
 	} else {
-		targetURL = baixarapido.URL
+		targetURL = strings.TrimRight(baixarapido.URL, "/")
 	}
 
 	logging.Info().
@@ -65,11 +69,17 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 	}
 
 	links := extractBaixarApidoLinks(doc)
+	logging.Info().
+		Int("links_found", len(links)).
+		Str("url", targetURL).
+		Msg("Extracted links")
 
 	// Fallback: se não achou nada e é uma busca, tenta queries simplificadas
 	if len(links) == 0 && q != "" && page == "1" {
 		for _, altQ := range buildBaixarApidoFallbackQueries(q) {
-			altURL := baixarapido.URL + baixarapido.SearchURL + url.PathEscape(altQ) + "/"
+			base := strings.TrimRight(baixarapido.URL, "/")
+			encoded := strings.ReplaceAll(url.PathEscape(altQ), "%20", "+")
+			altURL := base + "/pesquisa/" + encoded + "/"
 			logging.Info().
 				Str("original_q", q).
 				Str("fallback_q", altQ).
