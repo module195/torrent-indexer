@@ -232,6 +232,7 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
 
 func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
 	var indexedTorrents []schema.IndexedTorrent
