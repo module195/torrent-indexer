@@ -326,25 +326,37 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 				return
 			}
 
-			// Título preferencial: dn= do magnet, limpo
-			releaseTitle := cleanTorrentFilmesHDsTitle(magnetParsed.DisplayName)
+			// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
+			releaseTitle := magnetParsed.DisplayName
 			if releaseTitle == "" {
 				// Fallback manual: extrai dn= da URL do magnet
 				if m := regexp.MustCompile(`(?i)[?&]dn=([^&]+)`).FindStringSubmatch(magnetLink); len(m) > 1 {
 					releaseTitle, _ = url.QueryUnescape(m[1])
 					releaseTitle = strings.ReplaceAll(releaseTitle, "+", " ")
 					releaseTitle = strings.TrimSpace(releaseTitle)
-					releaseTitle = cleanTorrentFilmesHDsTitle(releaseTitle)
 				}
 			}
 			if releaseTitle == "" {
-				releaseTitle = title // último recurso: título da página
+				releaseTitle = title
 			}
 
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
 
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
+
+			// Fallback: detecta áudio pelo título se vazio
+			if len(magnetAudio) == 0 {
+				titleLower := strings.ToLower(releaseTitle)
+				if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
+					strings.Contains(titleLower, "dublado") {
+					magnetAudio = append(magnetAudio, "Português")
+				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
+					strings.Contains(titleLower, "english") {
+					magnetAudio = append(magnetAudio, "Inglês")
+				}
+			}
 
 			// Title processado - usa processTitle como torrent-dos-filmes
 			titleProcessed := processTitle(title, magnetAudio)
