@@ -374,6 +374,8 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			if releaseTitle == "" {
 				releaseTitle = title
 			}
+			// Limpa título como baixarapido
+			releaseTitle = cleanRedeTorrentTitle(releaseTitle)
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
@@ -485,4 +487,54 @@ func buildRedeTorrentFallbackQueries(q string) []string {
 	}
 
 	return queries
+}
+
+func cleanRedeTorrentTitle(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	s := raw
+
+	// Remove extensão
+	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
+
+	// Normaliza pontos e underscores ANTES de checar prefixos
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+
+	// Remove prefixos de sites
+	sitePrefixes := []string{
+		"BAIXARAPIDO COM", "SITEDETORRENTS COM", "HIDRATORRENTS ORG",
+		"VAMOSTORRENT COM", "TORRENTFILMESHDS", "BLUDV", "REDE TORRENT",
+	}
+	for _, prefix := range sitePrefixes {
+		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*[-.]?\s*`).ReplaceAllString(s, "")
+	}
+
+	// Remove padrões de episódio no início (EPISODIO-04, EPISODIOS-01-E-02)
+	s = regexp.MustCompile(`(?i)^EPISODIO[S]?\s*[-.]?\s*\d+(\s*[-E]\s*\d+)?\s*[-.]?\s*`).ReplaceAllString(s, "")
+
+	// Remove tags de áudio no início
+	s = regexp.MustCompile(`(?i)^[-.]?\s*(DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO)\s*[-.]?\s*`).ReplaceAllString(s, "")
+
+	// Preserva tags com hífen
+	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "DUAL-AUDIO", "CAM-RIP"}
+	placeholders := map[string]string{}
+	for i, tag := range knownHyphen {
+		ph := fmt.Sprintf("⟦%d⟧", i)
+		if strings.Contains(strings.ToUpper(s), tag) {
+			s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(tag)).ReplaceAllString(s, ph)
+			placeholders[ph] = tag
+		}
+	}
+
+	s = strings.ReplaceAll(s, "-", " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	for ph, tag := range placeholders {
+		s = strings.ReplaceAll(s, ph, tag)
+	}
+
+	return strings.TrimSpace(s)
 }
