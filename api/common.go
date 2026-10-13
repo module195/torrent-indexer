@@ -137,21 +137,21 @@ func getSeparator(s string) string {
 // It looks for patterns like "Áudio: Português, Inglês" or "Idioma: Português, Inglês"
 func findAudioFromText(text string) []schema.Audio {
 	var audio []schema.Audio
-	re := regexp.MustCompile(`(.udio|Idioma|Languages):.?(.*)`)
+	// Regex mais específico - captura apenas até o próximo campo ou fim
+	re := regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|$))`)
 	audioMatch := re.FindStringSubmatch(text)
-	if len(audioMatch) > 0 {
-		sep := getSeparator(audioMatch[2])
-		langs_raw := strings.Split(audioMatch[2], sep)
+	if len(audioMatch) > 1 {
+		sep := getSeparator(audioMatch[1])
+		langs_raw := strings.Split(audioMatch[1], sep)
 		for _, lang := range langs_raw {
 			lang = strings.TrimSpace(lang)
+			// Ignora números e textos muito curtos
+			if len(lang) < 3 || regexp.MustCompile(`^\d`).MatchString(lang) {
+				continue
+			}
 			a := schema.GetAudioFromString(lang)
 			if a != nil {
 				audio = append(audio, *a)
-			} else if strings.TrimSpace(lang) != "" {
-				logging.Warn().
-					Str("language", lang).
-					Msg("Unknown language detected")
-				logging.Debug().Str("text", text).Msg("Unknown language detected from this text")
 			}
 		}
 	}
