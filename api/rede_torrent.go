@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -276,9 +278,15 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		titleP = []string{"", h1, "", ""}
 	}
 	title := strings.TrimSpace(titleP[1])
-	year := ""
-	if len(titleP) > 3 {
-		year = strings.TrimSpace(titleP[3])
+	// Year: tenta regex no título, depois no texto
+	yearRe := regexp.MustCompile(`\((\d{4})\)|\b(19|20)\d{2}\b`)
+	if m := yearRe.FindStringSubmatch(title); len(m) > 1 {
+		year = m[1]
+	}
+	if year == "" {
+		if m := yearRe.FindStringSubmatch(article.Text()); len(m) > 1 {
+			year = m[1]
+		}
 	}
 
 	textContent := article.Find(".apenas_itemprop")
@@ -342,7 +350,14 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		}
 	})
 
-	size = utils.StableUniq(size)
+	// Fallback de áudio: se não encontrou em #informacoes, tenta no título e body
+	if len(audio) == 0 {
+		bodyText := article.Text()
+		if bodyText == "" {
+			bodyText = doc.Text()
+		}
+		audio = findAudioFromText(title + " " + bodyText)
+	}
 
 	if len(magnetLinks) == 0 {
 		return nil, nil
@@ -416,6 +431,19 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			indexedTorrents = append(indexedTorrents, it)
 		}
 	}
+
+	// Ordena: seeders desc, depois year desc, depois title
+	sort.SliceStable(indexedTorrents, func(a, b int) bool {
+		if indexedTorrents[a].SeedCount != indexedTorrents[b].SeedCount {
+			return indexedTorrents[a].SeedCount > indexedTorrents[b].SeedCount
+		}
+		ya, _ := strconv.Atoi(indexedTorrents[a].Year)
+		yb, _ := strconv.Atoi(indexedTorrents[b].Year)
+		if ya != yb {
+			return ya > yb
+		}
+		return indexedTorrents[a].Title < indexedTorrents[b].Title
+	})
 
 	return indexedTorrents, nil
 }
