@@ -145,7 +145,7 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
 	var audio []schema.Audio
 	var year string
 	var size []string
-	capa.Find(".post-description p").Each(func(i int, s *goquery.Selection) {
+	capa.Find(".post-description p, .post-description div, .post-description span").Each(func(i int, s *goquery.Selection) {
 		// pattern:
 		// Nome Original: 28 Weeks Later
 		// Lançamento: 2007
@@ -170,8 +170,31 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
 		size = append(size, findSizesFromText(text.String())...)
 	})
 
-	// TODO: find any link from imdb
+	// IMDB
 	imdbLink := ""
+	// 1. Links diretos
+	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
+		href, _ := s.Attr("href")
+		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
+			imdbLink = m
+		}
+	})
+	// 2. Padrão ttXXXXXXX no texto
+	if imdbLink == "" {
+		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
+			imdbLink = m
+		}
+	}
+	// 3. Fallback: busca por título
+	if imdbLink == "" && title != "" {
+		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
+			imdbLink = fetched
+		}
+	}
+	// Normaliza para URL completa
+	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
+		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
+	}
 
 	size = utils.StableUniq(size)
 
