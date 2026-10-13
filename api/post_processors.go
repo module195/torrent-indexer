@@ -122,23 +122,22 @@ func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTor
 
 func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	q := r.URL.Query().Get("q")
-	qLower := strings.ToLower(strings.TrimSpace(q))
+	qNorm := normalize(q)
 
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
 		mainTitle := extractMainTitle(it.Title)
 		originalTitle := extractMainTitle(it.OriginalTitle)
 		
-		// Combine titles for matching
-		combined := strings.ToLower(mainTitle + " " + originalTitle)
-		combined = strings.ReplaceAll(combined, ".", " ")
+		// Normalize for matching
+		combined := normalize(mainTitle + " " + originalTitle)
 		
-		// Compute similarity against main title
+		// Compute similarity
 		splitLength := 2
-		sim := edlib.JaccardSimilarity(combined, qLower, splitLength)
+		sim := edlib.JaccardSimilarity(combined, qNorm, splitLength)
 		
-		// Boost if query matches the start of main title
-		if strings.HasPrefix(combined, qLower) || strings.Contains(combined, qLower) {
+		// Boost if query matches the main title
+		if strings.Contains(combined, qNorm) || strings.HasPrefix(combined, qNorm) {
 			sim = max(sim, 0.5)
 		}
 		
@@ -158,6 +157,24 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	})
 
 	return torrents
+}
+
+// normalize removes accents, punctuation and lowercases
+func normalize(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	replacer := strings.NewReplacer(
+		"á", "a", "à", "a", "ã", "a", "â", "a",
+		"é", "e", "è", "e", "ê", "e",
+		"í", "i", "ì", "i", "î", "i",
+		"ó", "o", "ò", "o", "õ", "o", "ô", "o",
+		"ú", "u", "ù", "u", "û", "u",
+		"ç", "c",
+	)
+	s = replacer.Replace(s)
+	return strings.TrimSpace(s)
 }
 
 // extractMainTitle extracts the main title before year/quality patterns
