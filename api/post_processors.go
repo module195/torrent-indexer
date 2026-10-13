@@ -156,10 +156,15 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		torrents[i].Similarity = sim
 	}
 
-	// Filter low similarity (threshold 0.05)
+	// Filter low similarity
 	if q != "" {
+		threshold := 0.05
+		// If query has episode info, require higher threshold for non-matching episodes
+		if qEpisode != "" {
+			threshold = 0.25
+		}
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-			return it.Similarity >= 0.05
+			return it.Similarity >= threshold
 		})
 	}
 
