@@ -237,13 +237,17 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		return nil, err
 	}
 
-	// Title: h1 ou title tag
+	// Title: h1 ou title tag - limpa para melhor similarity
 	title := strings.TrimSpace(doc.Find("h1").First().Text())
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("title").Text())
 		title = regexp.MustCompile(`(?i)\s*[-|].*$`).ReplaceAllString(title, "")
 		title = strings.TrimSpace(title)
 	}
+	// Limpa título para similarity
+	title = regexp.MustCompile(`(?i)\s*(torrent|download|dublado|legendado|dual|audio).*$`).ReplaceAllString(title, "")
+	title = regexp.MustCompile(`\s*\(\d{4}\)\s*`).ReplaceAllString(title, " ")
+	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, fmt.Errorf("could not extract title from %s", link)
 	}
@@ -292,11 +296,25 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		}
 	}
 
-	// Size: do texto
+	// Size: do texto e download-row
 	var size []string
-	doc.Find(".download-name, .download-row, p, span").Each(func(_ int, s *goquery.Selection) {
-		size = append(size, findSizesFromText(s.Text())...)
+	doc.Find(".download-row, .download-name, .download-list, p, span, div").Each(func(_ int, s *goquery.Selection) {
+		text := s.Text()
+		if m := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindStringSubmatch(text); len(m) > 0 {
+			size = append(size, m[0])
+		}
+		size = append(size, findSizesFromText(text)...)
 	})
+	// Remove duplicados
+	seenSize := map[string]bool{}
+	var uniqueSize []string
+	for _, s := range size {
+		if !seenSize[s] {
+			seenSize[s] = true
+			uniqueSize = append(uniqueSize, s)
+		}
+	}
+	size = uniqueSize
 
 	// IMDB
 	imdbLink := ""
