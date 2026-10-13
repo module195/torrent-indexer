@@ -120,10 +120,16 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		return allTorrents[a].Title < allTorrents[b].Title
 	})
 
+	// Aplica post-processors (similarity, etc)
+	postProcessedTorrents := allTorrents
+	for _, processor := range i.postProcessors {
+		postProcessedTorrents = processor(i, r, postProcessedTorrents)
+	}
+
 	resp := Response{
-		Count:        len(allTorrents),
+		Count:        len(postProcessedTorrents),
 		IndexedCount: len(allTorrents),
-		Results:      allTorrents,
+		Results:      postProcessedTorrents,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -266,6 +272,15 @@ func cleanBaixarApidoTitle(raw string) string {
 
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
+
+	// Remove prefixos de sites
+	sitePrefixes := []string{
+		"BAIXARAPIDO COM", "SITEDETORRENTS COM", "HIDRATORRENTS ORG",
+		"VAMOSTORRENT COM", "TORRENTFILMESHDS", "BLUDV",
+	}
+	for _, prefix := range sitePrefixes {
+		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*`).ReplaceAllString(s, "")
+	}
 
 	// Preserva tags com hífen
 	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "DUAL-AUDIO", "CAM-RIP"}
