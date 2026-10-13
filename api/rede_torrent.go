@@ -60,6 +60,42 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 
 	// Fallback: se não achou nada e é busca, tenta queries simplificadas
 	if len(links) == 0 && q != "" && page == "" {
+// buildRedeTorrentFallbackQueries gera buscas alternativas quando a original falha.
+func buildRedeTorrentFallbackQueries(q string) []string {
+	var queries []string
+	seen := map[string]bool{}
+
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		queries = append(queries, s)
+	}
+
+	// Remove números de temporada/episódio
+	cleaned := regexp.MustCompile(`(?i)\s*s\d{1,2}e\d{1,2}\b`).ReplaceAllString(q, "")
+	cleaned = regexp.MustCompile(`(?i)\s*s\d{1,2}\b`).ReplaceAllString(cleaned, "")
+	cleaned = regexp.MustCompile(`(?i)\s*\d{1,2}x\d{1,2}\b`).ReplaceAllString(cleaned, "")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned != q {
+		add(cleaned)
+	}
+
+	// Primeira palavra
+	parts := strings.Fields(q)
+	if len(parts) > 1 {
+		add(parts[0])
+	}
+
+	// Duas primeiras palavras
+	if len(parts) > 2 {
+		add(strings.Join(parts[:2], " "))
+	}
+
+	return queries
+}
 		for _, altQ := range buildRedeTorrentFallbackQueries(q) {
 			altURL := fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, url.QueryEscape(altQ))
 			logging.Info().
@@ -304,16 +340,28 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 
 	// IMDB
 	imdbLink := ""
-	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
+	// 1. Links diretos
+	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
-		if imdb, err := getIMDBLink(href); err == nil {
-			imdbLink = imdb
+		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
+			imdbLink = m
 		}
 	})
-
-	// Fallback: busca IMDB por título se vazio
+	// 2. Padrão ttXXXXXXX no texto
+	if imdbLink == "" {
+		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
+			imdbLink = m
+		}
+	}
+	// 3. Fallback: busca por título
 	if imdbLink == "" && title != "" {
-		imdbLink = fetchIMDBByTitle(title, year)
+		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
+			imdbLink = fetched
+		}
+	}
+	// Normaliza para URL completa
+	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
+		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
 	}
 
 	if len(magnetLinks) == 0 {
@@ -411,3 +459,4 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 
 	return indexedTorrents, nil
 }
+
