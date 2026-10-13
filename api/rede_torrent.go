@@ -60,42 +60,6 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 
 	// Fallback: se não achou nada e é busca, tenta queries simplificadas
 	if len(links) == 0 && q != "" && page == "" {
-// buildRedeTorrentFallbackQueries gera buscas alternativas quando a original falha.
-func buildRedeTorrentFallbackQueries(q string) []string {
-	var queries []string
-	seen := map[string]bool{}
-
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			return
-		}
-		seen[s] = true
-		queries = append(queries, s)
-	}
-
-	// Remove números de temporada/episódio
-	cleaned := regexp.MustCompile(`(?i)\s*s\d{1,2}e\d{1,2}\b`).ReplaceAllString(q, "")
-	cleaned = regexp.MustCompile(`(?i)\s*s\d{1,2}\b`).ReplaceAllString(cleaned, "")
-	cleaned = regexp.MustCompile(`(?i)\s*\d{1,2}x\d{1,2}\b`).ReplaceAllString(cleaned, "")
-	cleaned = strings.TrimSpace(cleaned)
-	if cleaned != q {
-		add(cleaned)
-	}
-
-	// Primeira palavra
-	parts := strings.Fields(q)
-	if len(parts) > 1 {
-		add(parts[0])
-	}
-
-	// Duas primeiras palavras
-	if len(parts) > 2 {
-		add(strings.Join(parts[:2], " "))
-	}
-
-	return queries
-}
 		for _, altQ := range buildRedeTorrentFallbackQueries(q) {
 			altURL := fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, url.QueryEscape(altQ))
 			logging.Info().
@@ -110,10 +74,6 @@ func buildRedeTorrentFallbackQueries(q string) []string {
 			}
 			if len(altLinks) > 0 {
 				links = altLinks
-				logging.Info().
-					Str("fallback_q", altQ).
-					Int("links", len(links)).
-					Msg("Fallback search found results")
 				break
 			}
 		}
@@ -460,3 +420,40 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 	return indexedTorrents, nil
 }
 
+
+// buildRedeTorrentFallbackQueries gera buscas alternativas quando a original falha.
+func buildRedeTorrentFallbackQueries(q string) []string {
+	var queries []string
+	seen := map[string]bool{}
+
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		queries = append(queries, s)
+	}
+
+	// Remove números de temporada/episódio
+	cleaned := regexp.MustCompile(`(?i)\s*s\d{1,2}e\d{1,2}\b`).ReplaceAllString(q, "")
+	cleaned = regexp.MustCompile(`(?i)\s*s\d{1,2}\b`).ReplaceAllString(cleaned, "")
+	cleaned = regexp.MustCompile(`(?i)\s*\d{1,2}x\d{1,2}\b`).ReplaceAllString(cleaned, "")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned != q {
+		add(cleaned)
+	}
+
+	// Primeira palavra
+	parts := strings.Fields(q)
+	if len(parts) > 1 {
+		add(parts[0])
+	}
+
+	// Duas primeiras palavras
+	if len(parts) > 2 {
+		add(strings.Join(parts[:2], " "))
+	}
+
+	return queries
+}
