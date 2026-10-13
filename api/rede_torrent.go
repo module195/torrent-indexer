@@ -393,9 +393,11 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			// Fallback: detecta áudio pelo título se vazio
 			if len(magnetAudio) == 0 {
 				titleLower := strings.ToLower(releaseTitle)
-				if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
-					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
-					strings.Contains(titleLower, "dublado") {
+				// Dual = Português + Inglês
+				if strings.Contains(titleLower, "dual") {
+					magnetAudio = append(magnetAudio, "Português", "Inglês")
+				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
 					magnetAudio = append(magnetAudio, "Português")
 				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
 					strings.Contains(titleLower, "english") {
@@ -413,6 +415,19 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			var mySize string
 			if len(size) == len(magnetLinks) {
 				mySize = size[it]
+			}
+			// Fallback: size do magnet xl=
+			if mySize == "" {
+				if xl := regexp.MustCompile(`[?&]xl=(\d+)`).FindStringSubmatch(magnetLink); len(xl) > 1 {
+					if bytes, err := strconv.ParseInt(xl[1], 10, 64); err == nil && bytes > 0 {
+						gb := float64(bytes) / (1024 * 1024 * 1024)
+						if gb >= 1 {
+							mySize = fmt.Sprintf("%.2f GB", gb)
+						} else {
+							mySize = fmt.Sprintf("%.0f MB", float64(bytes)/(1024*1024))
+						}
+					}
+				}
 			}
 			if mySize == "" {
 				go func() {
