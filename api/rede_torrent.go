@@ -164,7 +164,7 @@ func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([
 // fetchIMDBByTitle busca IMDB por título usando APIs gratuitas
 func fetchIMDBByTitle(title, year string) string {
 	// Limpa título: remove tags de qualidade, áudio, formato
-	cleanTitle := regexp.MustCompile(`(?i)\s*[-:]?\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip|x264|x265|hevc|aac|5\.1).*$`).ReplaceAllString(title, "")
+	cleanTitle := regexp.MustCompile(`(?i)\s*[-:]?\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip|x264|x265|hevc|aac|5\.1|remake).*$`).ReplaceAllString(title, "")
 	cleanTitle = regexp.MustCompile(`(?i)\s*\b(19|20)\d{2}\b\s*`).ReplaceAllString(cleanTitle, " ")
 	cleanTitle = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(cleanTitle), " ")
 	cleanTitle = strings.Trim(cleanTitle, " -:")
@@ -174,30 +174,34 @@ func fetchIMDBByTitle(title, year string) string {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Tenta OMDb primeiro (movies)
-	omdbURL := fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
+	// Tenta OMDb com ano
 	if year != "" {
-		omdbURL += "&y=" + year
-	}
-	if resp, err := client.Get(omdbURL); err == nil {
-		defer resp.Body.Close()
-		var result struct {
-			IMDBID string `json:"imdbID"`
-		}
-		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.IMDBID != "" {
-			return "https://www.imdb.com/title/" + result.IMDBID + "/"
-		}
-	}
-
-	// Tenta sem ano se falhou
-	if year != "" {
-		omdbURL = fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
+		omdbURL := fmt.Sprintf("https://www.omdbapi.com/?t=%s&y=%s&apikey=trilogy", url.QueryEscape(cleanTitle), year)
 		if resp, err := client.Get(omdbURL); err == nil {
 			defer resp.Body.Close()
 			var result struct {
 				IMDBID string `json:"imdbID"`
+				Title  string `json:"Title"`
 			}
 			if json.NewDecoder(resp.Body).Decode(&result) == nil && result.IMDBID != "" {
+				// Valida se o título retornado é similar
+				if strings.Contains(strings.ToLower(result.Title), strings.ToLower(cleanTitle[:min(len(cleanTitle), 10)])) {
+					return "https://www.imdb.com/title/" + result.IMDBID + "/"
+				}
+			}
+		}
+	}
+
+	// Tenta OMDb sem ano
+	omdbURL := fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
+	if resp, err := client.Get(omdbURL); err == nil {
+		defer resp.Body.Close()
+		var result struct {
+			IMDBID string `json:"imdbID"`
+			Title  string `json:"Title"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.IMDBID != "" {
+			if strings.Contains(strings.ToLower(result.Title), strings.ToLower(cleanTitle[:min(len(cleanTitle), 10)])) {
 				return "https://www.imdb.com/title/" + result.IMDBID + "/"
 			}
 		}
@@ -208,125 +212,26 @@ func fetchIMDBByTitle(title, year string) string {
 	if resp, err := client.Get(tvmazeURL); err == nil {
 		defer resp.Body.Close()
 		var result struct {
+			Name      string `json:"name"`
 			Externals struct {
 				IMDB string `json:"imdb"`
 			} `json:"externals"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Externals.IMDB != "" {
-			return "https://www.imdb.com/title/" + result.Externals.IMDB + "/"
+			if strings.Contains(strings.ToLower(result.Name), strings.ToLower(cleanTitle[:min(len(cleanTitle), 10)])) {
+				return "https://www.imdb.com/title/" + result.Externals.IMDB + "/"
+			}
 		}
 	}
 
 	return ""
 }
-func buildRedeTorrentFallbackQueries(original string) []string {
-	var out []string
-	seen := map[string]bool{}
 
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || s == original || seen[s] {
-			return
-		}
-		seen[s] = true
-		out = append(out, s)
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	// 1. Remove dois-pontos e separadores
-	cleaned := strings.NewReplacer(":", " ", "|", " ", "–", " ", "—", " ").Replace(original)
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
-	add(cleaned)
-
-	// 2. Remove padrões de episódio/temporada
-	noEp := regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+)\s*`).ReplaceAllString(cleaned, " ")
-	noEp = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(noEp), " ")
-	add(noEp)
-
-	// 3. Primeiras palavras
-	words := strings.Fields(noEp)
-	if len(words) > 3 {
-		add(strings.Join(words[:3], " "))
-	}
-	if len(words) > 2 {
-		add(strings.Join(words[:2], " "))
-	}
-
-	if len(out) > 3 {
-		out = out[:3]
-	}
-	return out
-}
-
-// cleanRedeTorrentTitle extrai um título legível do dn= do magnet.
-// Remove prefixos de site (BAIXARAPIDO.COM, etc.), tags técnicas e duplicações.
-func cleanRedeTorrentTitle(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	s := raw
-
-	// Remove prefixos comuns de sites
-	prefixes := []string{
-		"BAIXARAPIDO.COM-.", "BAIXARAPIDO.COM-", "BAIXARAPIDO.COM.",
-		"REDETORRENT.COM-.", "REDETORRENT.COM-",
-		"COMANDOTORRENTS-.", "COMANDOTORRENTS-",
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(strings.ToUpper(s), strings.ToUpper(p)) {
-			s = s[len(p):]
-			break
-		}
-	}
-
-	// Remove sequências de tags técnicas no início (EPISODIO-05.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-.)
-	// Mantém a parte que parece nome (contém letras misturadas, não só tags)
-	parts := strings.Split(s, ".")
-	var keepFrom int
-	for i, p := range parts {
-		up := strings.ToUpper(p)
-		// Tags conhecidas
-		if up == "WEB-DL" || up == "WEBDL" || up == "1080P" || up == "720P" || up == "4K" ||
-			up == "MKV" || up == "MP4" || up == "5.1" || up == "DUBLADO" || up == "DUAL-AUDIO" ||
-			up == "DUAL" || up == "LEGENDADO" || up == "EPISODIO" || strings.HasPrefix(up, "EPISODIO-") ||
-			strings.HasPrefix(up, "S0") || up == "BLURAY" || up == "HDTV" || up == "X264" || up == "X265" ||
-			up == "HEVC" || up == "AAC" || up == "DDP" || up == "ATMOS" || up == "-" || up == "" {
-			keepFrom = i + 1
-			continue
-		}
-		// Se chegou aqui, provavelmente é o nome
-		break
-	}
-	if keepFrom > 0 && keepFrom < len(parts) {
-		s = strings.Join(parts[keepFrom:], ".")
-	}
-
-	// Limpa separadores, mas preserva tags conhecidas com hífen
-	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "BD-R", "HD-RIP", "HD-TV", "DDP-5.1", "DDP5.1", "DUAL-AUDIO", "MULTI-AUDIO"}
-	placeholders := map[string]string{}
-	for i, tag := range knownHyphen {
-		ph := fmt.Sprintf("⟦%d⟧", i)
-		if strings.Contains(strings.ToUpper(s), tag) {
-			s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(tag)).ReplaceAllString(s, ph)
-			placeholders[ph] = tag
-		}
-	}
-
-	s = strings.ReplaceAll(s, ".", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "-", " ")
-	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
-	s = strings.TrimSpace(s)
-
-	// Restaura tags com hífen
-	for ph, tag := range placeholders {
-		s = strings.ReplaceAll(s, ph, tag)
-	}
-
-	// Remove sufixo (brazilian) se existir
-	s = regexp.MustCompile(`(?i)\s*\(brazilian\)\s*$`).ReplaceAllString(s, "")
-
-	return strings.TrimSpace(s)
-}
+	return b
 
 func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
 	var indexedTorrents []schema.IndexedTorrent
@@ -371,10 +276,24 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		}
 	})
 
-	// Audio: do título e do body
+	// Audio: do título, original_title e body
 	var audio []schema.Audio
 	bodyText := doc.Text()
 	audio = findAudioFromText(title + " " + bodyText)
+	
+	// Detecta áudio pelo título se vazio
+	if len(audio) == 0 {
+		titleLower := strings.ToLower(title + " " + bodyText)
+		if strings.Contains(titleLower, "dual") {
+			audio = append(audio, "Português", "Inglês")
+		} else if strings.Contains(titleLower, "dublado") || strings.Contains(titleLower, "brazilian") ||
+			strings.Contains(titleLower, "pt-br") || strings.Contains(titleLower, "portugues") {
+			audio = append(audio, "Português")
+		} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
+			strings.Contains(titleLower, "english") {
+			audio = append(audio, "Inglês")
+		}
+	}
 
 	// Size: do texto
 	var size []string
@@ -426,7 +345,7 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 
 			// Fallback: detecta áudio pelo título se vazio
 			if len(magnetAudio) == 0 {
-				titleLower := strings.ToLower(releaseTitle)
+				titleLower := strings.ToLower(releaseTitle + " " + title)
 				if strings.Contains(titleLower, "dual") {
 					magnetAudio = append(magnetAudio, "Português", "Inglês")
 				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
