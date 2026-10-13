@@ -125,8 +125,9 @@ func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([
 		if !exists || href == "" || seen[href] {
 			return
 		}
-		// Filtra links de navegação
-		if strings.Contains(href, "/genero/") || strings.Contains(href, "/pagina/") {
+		// Filtra links de navegação e pesquisa
+		if strings.Contains(href, "/genero/") || strings.Contains(href, "/pagina/") ||
+			strings.Contains(href, "/pesquisa/") || strings.Contains(href, "?") {
 			return
 		}
 		seen[href] = true
@@ -162,19 +163,23 @@ func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([
 
 // fetchIMDBByTitle busca IMDB por título usando APIs gratuitas
 func fetchIMDBByTitle(title, year string) string {
-	// Limpa título
-	cleanTitle := regexp.MustCompile(`(?i)\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip).*$`).ReplaceAllString(title, "")
+	// Limpa título: remove tags de qualidade, áudio, formato
+	cleanTitle := regexp.MustCompile(`(?i)\s*[-:]?\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip|x264|x265|hevc|aac|5\.1).*$`).ReplaceAllString(title, "")
+	cleanTitle = regexp.MustCompile(`(?i)\s*\b(19|20)\d{2}\b\s*`).ReplaceAllString(cleanTitle, " ")
 	cleanTitle = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(cleanTitle), " ")
-	if cleanTitle == "" {
+	cleanTitle = strings.Trim(cleanTitle, " -:")
+	if cleanTitle == "" || len(cleanTitle) < 2 {
 		return ""
 	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Tenta OMDb primeiro (movies)
 	omdbURL := fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
 	if year != "" {
 		omdbURL += "&y=" + year
 	}
-	if resp, err := http.Get(omdbURL); err == nil {
+	if resp, err := client.Get(omdbURL); err == nil {
 		defer resp.Body.Close()
 		var result struct {
 			IMDBID string `json:"imdbID"`
@@ -184,9 +189,23 @@ func fetchIMDBByTitle(title, year string) string {
 		}
 	}
 
+	// Tenta sem ano se falhou
+	if year != "" {
+		omdbURL = fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
+		if resp, err := client.Get(omdbURL); err == nil {
+			defer resp.Body.Close()
+			var result struct {
+				IMDBID string `json:"imdbID"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&result) == nil && result.IMDBID != "" {
+				return "https://www.imdb.com/title/" + result.IMDBID + "/"
+			}
+		}
+	}
+
 	// Fallback: TVmaze (series)
 	tvmazeURL := fmt.Sprintf("https://api.tvmaze.com/singlesearch/shows?q=%s", url.QueryEscape(cleanTitle))
-	if resp, err := http.Get(tvmazeURL); err == nil {
+	if resp, err := client.Get(tvmazeURL); err == nil {
 		defer resp.Body.Close()
 		var result struct {
 			Externals struct {
