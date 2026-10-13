@@ -23,7 +23,7 @@ import (
 var rede_torrent = IndexerMeta{
 	Label:       "rede_torrent",
 	URL:         utils.GetIndexerURLFromEnv("INDEXER_REDE_TORRENT_URL", "https://redestorrents.com/"),
-	SearchURL:   "?s=",
+	SearchURL:   "index.php?busca=",
 	PagePattern: "pagina/%s/",
 }
 
