@@ -132,7 +132,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	// remove the ones with low similarity
 if r.URL.Query().Get("q") != "" {
     torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-        return it.Similarity >= 0.10
+        return it.Similarity >= 0
     })
 }
 
