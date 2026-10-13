@@ -24,8 +24,8 @@ import (
 var rede_torrent = IndexerMeta{
 	Label:       "rede_torrent",
 	URL:         utils.GetIndexerURLFromEnv("INDEXER_REDE_TORRENT_URL", "https://redestorrents.com/"),
-	SearchURL:   "index.php?busca=",
-	PagePattern: "%s",
+	SearchURL:   "?s=",
+	PagePattern: "pagina/%s/",
 }
 
 func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Request) {
@@ -120,17 +120,33 @@ func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([
 	var links []string
 	seen := map[string]bool{}
 
-	// Novo seletor (site atual usa a.cover-link)
-	doc.Find("a.cover-link").Each(func(_ int, s *goquery.Selection) {
+	// Novo seletor (site atual)
+	doc.Find("a[href*='torrent']").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if !exists || href == "" || seen[href] {
+			return
+		}
+		// Filtra links de navegação
+		if strings.Contains(href, "/genero/") || strings.Contains(href, "/pagina/") {
 			return
 		}
 		seen[href] = true
 		links = append(links, href)
 	})
 
-	// Fallback antigo (caso o site ainda tenha alguma página no formato anterior)
+	// Fallback: a.cover-link
+	if len(links) == 0 {
+		doc.Find("a.cover-link").Each(func(_ int, s *goquery.Selection) {
+			href, exists := s.Attr("href")
+			if !exists || href == "" || seen[href] {
+				return
+			}
+			seen[href] = true
+			links = append(links, href)
+		})
+	}
+
+	// Fallback antigo
 	if len(links) == 0 {
 		doc.Find(".capa_lista a").Each(func(_ int, s *goquery.Selection) {
 			href, exists := s.Attr("href")
@@ -262,103 +278,61 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		return nil, err
 	}
 
-	article := doc.Find(".conteudo")
-	// title pattern: "Something - optional balbla (dddd) some shit" - extract "Something" and "dddd"
-	titleRe := regexp.MustCompile(`^(.*?)(?: - (.*?))? \((\d{4})\)`)
-	titleP := titleRe.FindStringSubmatch(article.Find("h1").Text())
-	if len(titleP) < 3 {
-		// Fallback: tenta pegar título de outras formas
-		h1 := strings.TrimSpace(article.Find("h1").Text())
-		if h1 == "" {
-			h1 = strings.TrimSpace(doc.Find("h1").First().Text())
-		}
-		if h1 == "" {
-			return nil, fmt.Errorf("could not extract title from %s", link)
-		}
-		titleP = []string{"", h1, "", ""}
+	// Title: h1 ou title tag
+	title := strings.TrimSpace(doc.Find("h1").First().Text())
+	if title == "" {
+		title = strings.TrimSpace(doc.Find("title").Text())
+		title = regexp.MustCompile(`(?i)\s*[-|].*$`).ReplaceAllString(title, "")
+		title = strings.TrimSpace(title)
 	}
-	title := strings.TrimSpace(titleP[1])
+	if title == "" {
+		return nil, fmt.Errorf("could not extract title from %s", link)
+	}
+
+	// Year: de .info-pill time ou do texto
 	year := ""
-	// Year: tenta regex no título, depois no texto
-	yearRe := regexp.MustCompile(`\((\d{4})\)|\b(19|20)\d{2}\b`)
-	if m := yearRe.FindStringSubmatch(title); len(m) > 1 {
-		year = m[1]
-	}
+	doc.Find(".info-pill time[itemprop='datePublished']").Each(func(_ int, s *goquery.Selection) {
+		if year == "" {
+			year = strings.TrimSpace(s.Text())
+		}
+	})
 	if year == "" {
-		if m := yearRe.FindStringSubmatch(article.Text()); len(m) > 1 {
-			year = m[1]
+		yearRe := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+		if m := yearRe.FindString(doc.Text()); m != "" {
+			year = m
 		}
 	}
 
-	textContent := article.Find(".apenas_itemprop")
+	// Date
 	date := getPublishedDateFromMeta(doc)
-	magnets := textContent.Find("a[href^=\"magnet\"]")
+
+	// Magnets: .download-row a[href^='magnet:']
 	var magnetLinks []string
-	magnets.Each(func(i int, s *goquery.Selection) {
-		magnetLink, _ := s.Attr("href")
-		magnetLinks = append(magnetLinks, magnetLink)
+	doc.Find(".download-row a[href^='magnet:'], a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
+		if href, exists := s.Attr("href"); exists && href != "" {
+			magnetLinks = append(magnetLinks, href)
+		}
 	})
 
-	// Também procura magnets em qualquer lugar da página
-	if len(magnetLinks) == 0 {
-		doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
-			if href, exists := s.Attr("href"); exists && href != "" {
-				magnetLinks = append(magnetLinks, href)
-			}
-		})
-	}
-
+	// Audio: do título e do body
 	var audio []schema.Audio
+	bodyText := doc.Text()
+	audio = findAudioFromText(title + " " + bodyText)
+
+	// Size: do texto
 	var size []string
-	article.Find("div#informacoes > p").Each(func(i int, s *goquery.Selection) {
-		htmlContent, err := s.Html()
-		if err != nil {
-			logging.Error().
-				Str("url", link).
-				Err(err).Msg("Failed to get HTML content")
-			return
-		}
-
-		htmlContent = strings.ReplaceAll(htmlContent, "\n", "")
-		htmlContent = strings.ReplaceAll(htmlContent, "\t", "")
-
-		brRe := regexp.MustCompile(`<br\s*\/?>`)
-		htmlContent = brRe.ReplaceAllString(htmlContent, "<br>")
-		lines := strings.Split(htmlContent, "<br>")
-
-		var text strings.Builder
-		for _, line := range lines {
-			re := regexp.MustCompile(`<[^>]*>`)
-			line = re.ReplaceAllString(line, "")
-			line = strings.TrimSpace(line)
-			text.WriteString(line + "\n")
-		}
-
-		audio = append(audio, findAudioFromText(text.String())...)
-		y := findYearFromText(text.String(), title)
-		if y != "" {
-			year = y
-		}
-		size = append(size, findSizesFromText(text.String())...)
+	doc.Find(".download-name, .download-row, p, span").Each(func(_ int, s *goquery.Selection) {
+		size = append(size, findSizesFromText(s.Text())...)
 	})
 
+	// IMDB
 	imdbLink := ""
-	article.Find("a").Each(func(i int, s *goquery.Selection) {
-		link, _ := s.Attr("href")
-		_imdbLink, err := getIMDBLink(link)
-		if err == nil {
-			imdbLink = _imdbLink
+	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
+		href, _ := s.Attr("href")
+		if imdb, err := getIMDBLink(href); err == nil {
+			imdbLink = imdb
 		}
 	})
-
-	// Fallback de áudio: se não encontrou em #informacoes, tenta no título e body
-	if len(audio) == 0 {
-		bodyText := article.Text()
-		if bodyText == "" {
-			bodyText = doc.Text()
-		}
-		audio = findAudioFromText(title + " " + bodyText)
-	}
 
 	if len(magnetLinks) == 0 {
 		return nil, nil
@@ -370,9 +344,8 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		it := it
 		go func(it int, magnetLink string) {
 			magnetLink = strings.TrimSpace(magnetLink)
-			magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
-			magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
 			magnetLink = strings.ReplaceAll(magnetLink, "&", "&")
+			magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
 
 			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
 			if err != nil {
@@ -381,7 +354,6 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 				return
 			}
 
-			// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
 			releaseTitle := magnetParsed.DisplayName
 			if releaseTitle == "" {
 				releaseTitle = title
@@ -393,7 +365,6 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			// Fallback: detecta áudio pelo título se vazio
 			if len(magnetAudio) == 0 {
 				titleLower := strings.ToLower(releaseTitle)
-				// Dual = Português + Inglês
 				if strings.Contains(titleLower, "dual") {
 					magnetAudio = append(magnetAudio, "Português", "Inglês")
 				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
@@ -413,7 +384,7 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			titleProcessed := processTitle(title, magnetAudio)
 
 			var mySize string
-			if len(size) == len(magnetLinks) {
+			if it < len(size) {
 				mySize = size[it]
 			}
 			// Fallback: size do magnet xl=
@@ -428,11 +399,6 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 						}
 					}
 				}
-			}
-			if mySize == "" {
-				go func() {
-					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
-				}()
 			}
 
 			ixt := schema.IndexedTorrent{
@@ -461,18 +427,4 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		}
 	}
 
-	// Ordena: seeders desc, depois year desc, depois title
-	sort.SliceStable(indexedTorrents, func(a, b int) bool {
-		if indexedTorrents[a].SeedCount != indexedTorrents[b].SeedCount {
-			return indexedTorrents[a].SeedCount > indexedTorrents[b].SeedCount
-		}
-		ya, _ := strconv.Atoi(indexedTorrents[a].Year)
-		yb, _ := strconv.Atoi(indexedTorrents[b].Year)
-		if ya != yb {
-			return ya > yb
-		}
-		return indexedTorrents[a].Title < indexedTorrents[b].Title
-	})
-
 	return indexedTorrents, nil
-}
