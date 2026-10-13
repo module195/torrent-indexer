@@ -259,13 +259,31 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		year = m[1]
 	}
 
+	// IMDB
 	imdbLink := ""
-	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
+	// 1. Links diretos
+	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
-		if imdb, err := getIMDBLink(href); err == nil {
-			imdbLink = imdb
+		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
+			imdbLink = m
 		}
 	})
+	// 2. Padrão ttXXXXXXX no texto
+	if imdbLink == "" {
+		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
+			imdbLink = m
+		}
+	}
+	// 3. Fallback: busca por título
+	if imdbLink == "" && title != "" {
+		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
+			imdbLink = fetched
+		}
+	}
+	// Normaliza para URL completa
+	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
+		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
+	}
 
 	var audio []schema.Audio
 	var size []string
@@ -348,9 +366,11 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			// Fallback: detecta áudio pelo título se vazio
 			if len(magnetAudio) == 0 {
 				titleLower := strings.ToLower(releaseTitle)
-				if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
-					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
-					strings.Contains(titleLower, "dublado") {
+				// Dual = Português + Inglês
+				if strings.Contains(titleLower, "dual") {
+					magnetAudio = append(magnetAudio, "Português", "Inglês")
+				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
 					magnetAudio = append(magnetAudio, "Português")
 				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
 					strings.Contains(titleLower, "english") {
