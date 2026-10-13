@@ -129,12 +129,12 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		torrents[i].Similarity = edlib.JaccardSimilarity(jLower, qLower, splitLength)
 	}
 
-	// remove the ones with zero similarity
-	if len(torrents) > 20 && r.URL.Query().Get("filter_results") != "" && r.URL.Query().Get("q") != "" {
-		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-			return it.Similarity >= 0.10
-		})
-	}
+	// remove the ones with low similarity
+if r.URL.Query().Get("q") != "" {
+    torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
+        return it.Similarity >= 0.10
+    })
+}
 
 	// sort by similarity
 	slices.SortFunc(torrents, func(i, j schema.IndexedTorrent) int {
