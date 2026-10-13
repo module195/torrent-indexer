@@ -472,3 +472,4 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 	}
 
 	return indexedTorrents, nil
+}
