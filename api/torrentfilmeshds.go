@@ -185,6 +185,46 @@ func extractTorrentFilmesHDsLinks(doc *goquery.Document) []string {
 	return links
 }
 
+// cleanTorrentFilmesHDsTitle limpa o dn= do magnet para um título legível.
+// Preserva tags com hífen (WEB-DL, DUAL-SF, etc.) e remove sufixo (brazilian).
+func cleanTorrentFilmesHDsTitle(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	s := raw
+
+	// Preserva tags conhecidas com hífen
+	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "BD-R", "HD-RIP", "HD-TV", "DUAL-AUDIO", "DUAL-SF", "MULTI-AUDIO", "CAM-RIP"}
+	placeholders := map[string]string{}
+	for i, tag := range knownHyphen {
+		ph := fmt.Sprintf("⟦%d⟧", i)
+		if strings.Contains(strings.ToUpper(s), tag) {
+			s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(tag)).ReplaceAllString(s, ph)
+			placeholders[ph] = tag
+		}
+	}
+
+	// Remove extensão de arquivo
+	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
+
+	// Limpa separadores
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	// Restaura tags com hífen
+	for ph, tag := range placeholders {
+		s = strings.ReplaceAll(s, ph, tag)
+	}
+
+	// Remove sufixo (brazilian)
+	s = regexp.MustCompile(`(?i)\s*\(brazilian\)\s*$`).ReplaceAllString(s, "")
+
+	return strings.TrimSpace(s)
+}
+
 func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) ([]schema.IndexedTorrent, error) {
 	doc, err := getDocument(ctx, i, link, torrentFilmesHDs.URL)
 	if err != nil {
@@ -283,14 +323,15 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 				return
 			}
 
-			// Título preferencial: dn= do magnet (nome real do release)
-			releaseTitle := strings.TrimSpace(magnetParsed.DisplayName)
+			// Título preferencial: dn= do magnet, limpo
+			releaseTitle := cleanTorrentFilmesHDsTitle(magnetParsed.DisplayName)
 			if releaseTitle == "" {
 				// Fallback manual: extrai dn= da URL do magnet
 				if m := regexp.MustCompile(`(?i)[?&]dn=([^&]+)`).FindStringSubmatch(magnetLink); len(m) > 1 {
 					releaseTitle, _ = url.QueryUnescape(m[1])
 					releaseTitle = strings.ReplaceAll(releaseTitle, "+", " ")
 					releaseTitle = strings.TrimSpace(releaseTitle)
+					releaseTitle = cleanTorrentFilmesHDsTitle(releaseTitle)
 				}
 			}
 			if releaseTitle == "" {
