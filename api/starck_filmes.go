@@ -186,10 +186,27 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
 			imdbLink = m
 		}
 	}
-	// 3. Fallback: busca por título
-	if imdbLink == "" && title != "" {
-		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
-			imdbLink = fetched
+	// 3. Extrai título original da página
+	originalTitle := ""
+	doc.Find("span").Each(func(_ int, s *goquery.Selection) {
+		if strings.Contains(s.Text(), "Nome Original") {
+			if next := s.Next(); next != nil {
+				originalTitle = strings.TrimSpace(next.Text())
+			}
+		}
+	})
+	// 4. Fallback: busca por título original ou título limpo
+	if imdbLink == "" {
+		searchTitle := originalTitle
+		if searchTitle == "" {
+			searchTitle = regexp.MustCompile(`(?i)\s*[-:]?\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip|x264|x265|hevc|aac|5\.1|remake|recomeco|recomeço).*$`).ReplaceAllString(title, "")
+			searchTitle = regexp.MustCompile(`(?i)\s*\b(19|20)\d{2}\b\s*`).ReplaceAllString(searchTitle, " ")
+			searchTitle = strings.TrimSpace(searchTitle)
+		}
+		if searchTitle != "" {
+			if fetched := fetchIMDBByTitle(searchTitle, year); fetched != "" {
+				imdbLink = fetched
+			}
 		}
 	}
 	// Normaliza para URL completa
