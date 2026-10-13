@@ -381,14 +381,27 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 				return
 			}
 
-			// Título preferencial: dn= do magnet, limpo
-			releaseTitle := cleanRedeTorrentTitle(magnetParsed.DisplayName)
+			// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
+			releaseTitle := magnetParsed.DisplayName
 			if releaseTitle == "" {
 				releaseTitle = title
 			}
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
+
+			// Fallback: detecta áudio pelo título se vazio
+			if len(magnetAudio) == 0 {
+				titleLower := strings.ToLower(releaseTitle)
+				if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
+					strings.Contains(titleLower, "dublado") {
+					magnetAudio = append(magnetAudio, "Português")
+				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
+					strings.Contains(titleLower, "english") {
+					magnetAudio = append(magnetAudio, "Inglês")
+				}
+			}
 
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
 			if err != nil {
