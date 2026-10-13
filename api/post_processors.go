@@ -165,7 +165,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 	// Filter low similarity
 	if q != "" {
-		threshold := 0.05
+		var threshold float32 = 0.05
 		if qEpisode != "" {
 			threshold = 0.25
 		}
