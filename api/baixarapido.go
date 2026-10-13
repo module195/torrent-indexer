@@ -183,6 +183,17 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 	// Year - usa findYearFromText como torrent-dos-filmes
 	year := findYearFromText(doc.Text(), h1)
+	if year == "" {
+		// Fallback: regex direto
+		if m := regexp.MustCompile(`\((\d{4})\)`).FindStringSubmatch(h1); len(m) > 1 {
+			year = m[1]
+		}
+		if year == "" {
+			if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindStringSubmatch(doc.Text()); len(m) > 0 {
+				year = m[0]
+			}
+		}
+	}
 
 	// IMDB
 	imdb := ""
@@ -199,6 +210,28 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		audio = append(audio, findAudioFromText(s.Text())...)
 	})
 	audio = append(audio, findAudioFromText(h1)...)
+
+	// Fallback: mapeia keywords manualmente
+	bodyText := doc.Text()
+	allText := strings.ToLower(h1 + " " + bodyText)
+	hasPortugues := false
+	hasIngles := false
+	for _, a := range audio {
+		if a == "Português" {
+			hasPortugues = true
+		}
+		if a == "Inglês" {
+			hasIngles = true
+		}
+	}
+	// Legendado/eng = Inglês
+	if !hasIngles && (strings.Contains(allText, "legendado") || strings.Contains(allText, "eng") || strings.Contains(allText, "english")) {
+		audio = append(audio, "Inglês")
+	}
+	// Dublado/brazilian/pt-br/dual = Português
+	if !hasPortugues && (strings.Contains(allText, "dublado") || strings.Contains(allText, "brazilian") || strings.Contains(allText, "pt-br") || strings.Contains(allText, "portugues") || strings.Contains(allText, "dual")) {
+		audio = append(audio, "Português")
+	}
 
 	// Size - usa findSizesFromText como torrent-dos-filmes
 	var sizes []string
@@ -234,13 +267,27 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			continue
 		}
 
-		releaseTitle := cleanBaixarApidoTitle(magnetParsed.DisplayName)
+		// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
+		releaseTitle := magnetParsed.DisplayName
 		if releaseTitle == "" {
 			releaseTitle = h1
 		}
 
 		// Audio do magnet - usa getAudioFromTitle como torrent-dos-filmes
 		magnetAudio := getAudioFromTitle(releaseTitle, audio)
+
+		// Fallback: detecta áudio pelo título se vazio
+		if len(magnetAudio) == 0 {
+			titleLower := strings.ToLower(releaseTitle)
+			if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+				strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
+				strings.Contains(titleLower, "dublado") {
+				magnetAudio = append(magnetAudio, "Português")
+			} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
+				strings.Contains(titleLower, "english") {
+				magnetAudio = append(magnetAudio, "Inglês")
+			}
+		}
 
 		// Title processado - usa processTitle como torrent-dos-filmes
 		titleProcessed := processTitle(h1, magnetAudio)
