@@ -269,7 +269,8 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 
 	var audio []schema.Audio
 	var size []string
-	doc.Find(".conteudo p, .entry-content p, article p").Each(func(_ int, s *goquery.Selection) {
+	// Busca em mais elementos como torrent-dos-filmes
+	doc.Find("p, div, span, li, .conteudo, .entry-content, article").Each(func(_ int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
 		audio = append(audio, findAudioFromText(text)...)
 		size = append(size, findSizesFromText(text)...)
@@ -277,6 +278,8 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			year = y
 		}
 	})
+	// Também busca no título
+	audio = append(audio, findAudioFromText(title)...)
 	size = utils.StableUniq(size)
 
 	// Collect magnets from link.php pages
