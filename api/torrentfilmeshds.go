@@ -65,6 +65,32 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	}
 
 	links := extractTorrentFilmesHDsLinks(doc)
+
+	// Fallback: se não achou nada e é uma busca, tenta queries simplificadas
+	if len(links) == 0 && q != "" && page == "1" {
+		for _, altQ := range buildTorrentFilmesHDsFallbackQueries(q) {
+			altURL := torrentFilmesHDs.URL + torrentFilmesHDs.SearchURL + url.QueryEscape(altQ)
+			logging.Info().
+				Str("original_q", q).
+				Str("fallback_q", altQ).
+				Str("url", altURL).
+				Msg("Trying fallback search")
+
+			altDoc, err := getDocument(ctx, i, altURL, torrentFilmesHDs.URL)
+			if err != nil {
+				continue
+			}
+			links = extractTorrentFilmesHDsLinks(altDoc)
+			if len(links) > 0 {
+				logging.Info().
+					Str("fallback_q", altQ).
+					Int("links", len(links)).
+					Msg("Fallback search found results")
+				break
+			}
+		}
+	}
+
 	if len(links) == 0 {
 		logging.Info().Str("url", targetURL).Msg("No links found")
 		_ = json.NewEncoder(w).Encode(Response{
@@ -89,6 +115,47 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 		Count:        len(postProcessedTorrents),
 		IndexedCount: len(indexedTorrents),
 	})
+}
+
+// buildTorrentFilmesHDsFallbackQueries gera buscas alternativas quando a original falha.
+// Prioriza versões sem pontuação e sem indicadores de episódio/temporada.
+func buildTorrentFilmesHDsFallbackQueries(original string) []string {
+	var out []string
+	seen := map[string]bool{}
+
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || s == original || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+
+	// 1. Remove dois-pontos e outros separadores
+	cleaned := strings.NewReplacer(":", " ", "|", " ", "–", " ", "—", " ").Replace(original)
+	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
+	add(cleaned)
+
+	// 2. Remove padrões de episódio/temporada
+	noEp := regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+)\s*`).ReplaceAllString(cleaned, " ")
+	noEp = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(noEp), " ")
+	add(noEp)
+
+	// 3. Só as primeiras 2-3 palavras significativas (útil para títulos longos)
+	words := strings.Fields(noEp)
+	if len(words) > 3 {
+		add(strings.Join(words[:3], " "))
+	}
+	if len(words) > 2 {
+		add(strings.Join(words[:2], " "))
+	}
+
+	// Limita a 3 tentativas para não sobrecarregar
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
 }
 
 func extractTorrentFilmesHDsLinks(doc *goquery.Document) []string {
@@ -243,10 +310,12 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	return indexedTorrents, nil
 }
 
-var magnetRegex = regexp.MustCompile(`magnet:\?[^"'\s<>]+`)
+var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 
 func normalizeMagnet(mag string) string {
 	mag = strings.TrimSpace(mag)
+	// Decodifica entidades HTML comuns
+	mag = strings.ReplaceAll(mag, "&", "&")
 	mag = strings.ReplaceAll(mag, "&", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
