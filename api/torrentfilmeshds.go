@@ -283,7 +283,20 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 				return
 			}
 
-			releaseTitle := magnetParsed.DisplayName
+			// Título preferencial: dn= do magnet (nome real do release)
+			releaseTitle := strings.TrimSpace(magnetParsed.DisplayName)
+			if releaseTitle == "" {
+				// Fallback manual: extrai dn= da URL do magnet
+				if m := regexp.MustCompile(`(?i)[?&]dn=([^&]+)`).FindStringSubmatch(magnetLink); len(m) > 1 {
+					releaseTitle, _ = url.QueryUnescape(m[1])
+					releaseTitle = strings.ReplaceAll(releaseTitle, "+", " ")
+					releaseTitle = strings.TrimSpace(releaseTitle)
+				}
+			}
+			if releaseTitle == "" {
+				releaseTitle = title // último recurso: título da página
+			}
+
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
 
@@ -333,7 +346,7 @@ var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 func normalizeMagnet(mag string) string {
 	mag = strings.TrimSpace(mag)
 	// Decodifica entidades HTML
-	mag = strings.ReplaceAll(mag, "&", "&")
+	mag = strings.ReplaceAll(mag, "&amp;", "&")
 	mag = strings.ReplaceAll(mag, "&#38;", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
