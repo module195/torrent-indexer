@@ -182,6 +182,77 @@ func buildRedeTorrentFallbackQueries(original string) []string {
 	return out
 }
 
+// cleanRedeTorrentTitle extrai um título legível do dn= do magnet.
+// Remove prefixos de site (BAIXARAPIDO.COM, etc.), tags técnicas e duplicações.
+func cleanRedeTorrentTitle(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	s := raw
+
+	// Remove prefixos comuns de sites
+	prefixes := []string{
+		"BAIXARAPIDO.COM-.", "BAIXARAPIDO.COM-", "BAIXARAPIDO.COM.",
+		"REDETORRENT.COM-.", "REDETORRENT.COM-",
+		"COMANDOTORRENTS-.", "COMANDOTORRENTS-",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(strings.ToUpper(s), strings.ToUpper(p)) {
+			s = s[len(p):]
+			break
+		}
+	}
+
+	// Remove sequências de tags técnicas no início (EPISODIO-05.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-.)
+	// Mantém a parte que parece nome (contém letras misturadas, não só tags)
+	parts := strings.Split(s, ".")
+	var keepFrom int
+	for i, p := range parts {
+		up := strings.ToUpper(p)
+		// Tags conhecidas
+		if up == "WEB-DL" || up == "WEBDL" || up == "1080P" || up == "720P" || up == "4K" ||
+			up == "MKV" || up == "MP4" || up == "5.1" || up == "DUBLADO" || up == "DUAL-AUDIO" ||
+			up == "DUAL" || up == "LEGENDADO" || up == "EPISODIO" || strings.HasPrefix(up, "EPISODIO-") ||
+			strings.HasPrefix(up, "S0") || up == "BLURAY" || up == "HDTV" || up == "X264" || up == "X265" ||
+			up == "HEVC" || up == "AAC" || up == "DDP" || up == "ATMOS" || up == "-" || up == "" {
+			keepFrom = i + 1
+			continue
+		}
+		// Se chegou aqui, provavelmente é o nome
+		break
+	}
+	if keepFrom > 0 && keepFrom < len(parts) {
+		s = strings.Join(parts[keepFrom:], ".")
+	}
+
+	// Limpa separadores, mas preserva tags conhecidas com hífen
+	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "BD-R", "HD-RIP", "HD-TV", "DDP-5.1", "DDP5.1", "DUAL-AUDIO", "MULTI-AUDIO"}
+	placeholders := map[string]string{}
+	for i, tag := range knownHyphen {
+		ph := fmt.Sprintf("⟦%d⟧", i)
+		if strings.Contains(strings.ToUpper(s), tag) {
+			s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(tag)).ReplaceAllString(s, ph)
+			placeholders[ph] = tag
+		}
+	}
+
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	// Restaura tags com hífen
+	for ph, tag := range placeholders {
+		s = strings.ReplaceAll(s, ph, tag)
+	}
+
+	// Remove sufixo (brazilian) se existir
+	s = regexp.MustCompile(`(?i)\s*\(brazilian\)\s*$`).ReplaceAllString(s, "")
+
+	return strings.TrimSpace(s)
+}
+
 func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
 	var indexedTorrents []schema.IndexedTorrent
 	doc, err := getDocument(ctx, i, link, referer)
@@ -294,7 +365,11 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 				return
 			}
 
-			releaseTitle := magnetParsed.DisplayName
+			// Título preferencial: dn= do magnet, limpo
+			releaseTitle := cleanRedeTorrentTitle(magnetParsed.DisplayName)
+			if releaseTitle == "" {
+				releaseTitle = title
+			}
 			infoHash := magnetParsed.InfoHash.String()
 			trackers := magnetParsed.Trackers
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
