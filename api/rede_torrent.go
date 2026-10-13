@@ -298,18 +298,27 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 
 	// Size: do texto e download-row
 	var size []string
-	doc.Find(".download-row, .download-name, .download-list, p, span, div").Each(func(_ int, s *goquery.Selection) {
+	// 1. Spec-text (tamanho do arquivo)
+	doc.Find(".spec-text strong, .download-row, .download-name").Each(func(_ int, s *goquery.Selection) {
 		text := s.Text()
-		if m := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindStringSubmatch(text); len(m) > 0 {
-			size = append(size, m[0])
-		}
-		size = append(size, findSizesFromText(text)...)
+		// Captura todos os tamanhos (ex: "1.67 GB / 11.42 GB")
+		matches := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindAllString(text, -1)
+		size = append(size, matches...)
 	})
+	// 2. Fallback: texto geral
+	if len(size) == 0 {
+		doc.Find("p, span, div").Each(func(_ int, s *goquery.Selection) {
+			text := s.Text()
+			if m := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindString(text); m != "" {
+				size = append(size, m)
+			}
+		})
+	}
 	// Remove duplicados
 	seenSize := map[string]bool{}
 	var uniqueSize []string
 	for _, s := range size {
-		if !seenSize[s] {
+		if !seenSize[s] && s != "" {
 			seenSize[s] = true
 			uniqueSize = append(uniqueSize, s)
 		}
