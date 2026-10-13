@@ -191,9 +191,27 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		return nil, err
 	}
 
-	title := strings.TrimSpace(doc.Find("h1, .entry-title").First().Text())
+	// Título: prioriza .titulo (o h1 do site é o logo)
+	title := strings.TrimSpace(doc.Find(".titulo").First().Text())
 	if title == "" {
-		title = strings.TrimSpace(doc.Find("title").Text())
+		// Fallback: h1 que não seja o logo
+		doc.Find("h1").Each(func(_ int, s *goquery.Selection) {
+			if title != "" {
+				return
+			}
+			cls, _ := s.Attr("class")
+			if strings.Contains(cls, "logo") {
+				return
+			}
+			title = strings.TrimSpace(s.Text())
+		})
+	}
+	if title == "" {
+		// Último recurso: title tag, removendo sufixos comuns
+		rawTitle := strings.TrimSpace(doc.Find("title").Text())
+		title = strings.TrimSuffix(rawTitle, " - TorrentFilmesHDs.org")
+		title = strings.TrimSuffix(title, " | TorrentFilmesHDs.org")
+		title = strings.TrimSpace(title)
 	}
 
 	year := ""
@@ -314,9 +332,9 @@ var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 
 func normalizeMagnet(mag string) string {
 	mag = strings.TrimSpace(mag)
-	// Decodifica entidades HTML comuns
+	// Decodifica entidades HTML
 	mag = strings.ReplaceAll(mag, "&", "&")
-	mag = strings.ReplaceAll(mag, "&", "&")
+	mag = strings.ReplaceAll(mag, "&#38;", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
 	// Fix missing colon in urn:btih: (goquery strips it)
