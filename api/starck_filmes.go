@@ -80,8 +80,24 @@ func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Requ
 	}
 
 	var links []string
+	seen := make(map[string]bool)
 	doc.Find(".item").Each(func(i int, s *goquery.Selection) {
-		link, _ := s.Find("div.sub-item > a").Attr("href")
+		// Ignora slides (estão em .slide-item)
+		if s.Closest(".slide-item").Length() > 0 {
+			return
+		}
+		link, exists := s.Find("div.sub-item > a").Attr("href")
+		if !exists || link == "" {
+			return
+		}
+		// Ignora links de gênero/categoria
+		if strings.Contains(link, "?genre=") || strings.Contains(link, "?type=") {
+			return
+		}
+		if seen[link] {
+			return
+		}
+		seen[link] = true
 		links = append(links, link)
 	})
 
