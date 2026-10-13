@@ -185,14 +185,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 	// Audio
 	bodyText := doc.Text()
-	var audio []schema.Audio
-	if regexp.MustCompile(`(?i)dual[\s-]?áudio|dual[\s-]?audio`).MatchString(bodyText) {
-		audio = append(audio, schema.AudioPortuguês, schema.AudioInglês)
-	} else if regexp.MustCompile(`(?i)dublado`).MatchString(bodyText) {
-		audio = append(audio, schema.AudioPortuguês)
-	} else if regexp.MustCompile(`(?i)legendado`).MatchString(bodyText) {
-		audio = append(audio, schema.AudioInglês)
-	}
+	audio := findAudioFromText(h1 + " " + bodyText)
 
 	// Size
 	sizeRe := regexp.MustCompile(`(\d+(?:[.,]\d+)?\s*(?:GB|MB|TB))`)
@@ -217,7 +210,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	var results []schema.IndexedTorrent
 	for _, magnetLink := range magnetLinks {
 		magnetLink = normalizeMagnet(magnetLink)
-		magnetParsed, err := magnet.Parse(magnetLink)
+		magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
 		if err != nil {
 			continue
 		}
@@ -229,9 +222,9 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 		// Scrape seeders
 		seed, leech := 0, 0
-		if info, err := goscrape.GetLeechsAndSeeds(ctx, magnetParsed.InfoHash, magnetParsed.Trackers); err == nil {
-			seed = info.Seeders
-			leech = info.Leechers
+		if peer, s, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, magnetParsed.InfoHash.String(), magnetParsed.Trackers); err == nil {
+			seed = s
+			leech = peer
 		}
 
 		results = append(results, schema.IndexedTorrent{
