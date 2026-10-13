@@ -110,9 +110,10 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		return allTorrents[a].Title < allTorrents[b].Title
 	})
 
-	resp := schema.SearchResponse{
-		Count:   len(allTorrents),
-		Results: allTorrents,
+	resp := Response{
+		Count:        len(allTorrents),
+		IndexedCount: len(allTorrents),
+		Results:      allTorrents,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
