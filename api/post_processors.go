@@ -101,9 +101,13 @@ func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTor
 	emptyTitles := 0
 
 	for idx := range torrents {
+		// Remove prefixo [UNSAFE] se existir
+		torrents[idx].Title = strings.TrimPrefix(torrents[idx].Title, "[UNSAFE] ")
+		torrents[idx].Title = strings.TrimSpace(torrents[idx].Title)
+
 		if torrents[idx].Title == "" {
-			if i.config.FallbackTitleEnabled {
-				torrents[idx].Title = fmt.Sprintf("[UNSAFE] %s", torrents[idx].OriginalTitle)
+			if i.config.FallbackTitleEnabled && torrents[idx].OriginalTitle != "" {
+				torrents[idx].Title = torrents[idx].OriginalTitle
 			} else {
 				emptyTitles++
 			}
@@ -129,10 +133,10 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		torrents[i].Similarity = edlib.JaccardSimilarity(jLower, qLower, splitLength)
 	}
 
-	// remove the ones with zero similarity
+	// remove the ones with low similarity
 	if len(torrents) > 20 && r.URL.Query().Get("filter_results") != "" && r.URL.Query().Get("q") != "" {
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-			return it.Similarity > 0
+			return it.Similarity > 0.10
 		})
 	}
 
