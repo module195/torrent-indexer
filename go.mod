@@ -1,4 +1,4 @@
-module github.com/felipemarinho97/torrent-indexer
+module github.com/module195/torrent-indexer
 
 go 1.24.1
 
