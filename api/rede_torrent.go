@@ -161,7 +161,46 @@ func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([
 	return links, nil
 }
 
-// buildRedeTorrentFallbackQueries gera buscas alternativas quando a original falha.
+// fetchIMDBByTitle busca IMDB por título usando APIs gratuitas
+func fetchIMDBByTitle(title, year string) string {
+	// Limpa título
+	cleanTitle := regexp.MustCompile(`(?i)\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip).*$`).ReplaceAllString(title, "")
+	cleanTitle = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(cleanTitle), " ")
+	if cleanTitle == "" {
+		return ""
+	}
+
+	// Tenta OMDb primeiro (movies)
+	omdbURL := fmt.Sprintf("https://www.omdbapi.com/?t=%s&apikey=trilogy", url.QueryEscape(cleanTitle))
+	if year != "" {
+		omdbURL += "&y=" + year
+	}
+	if resp, err := http.Get(omdbURL); err == nil {
+		defer resp.Body.Close()
+		var result struct {
+			IMDBID string `json:"imdbID"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.IMDBID != "" {
+			return "https://www.imdb.com/title/" + result.IMDBID + "/"
+		}
+	}
+
+	// Fallback: TVmaze (series)
+	tvmazeURL := fmt.Sprintf("https://api.tvmaze.com/singlesearch/shows?q=%s", url.QueryEscape(cleanTitle))
+	if resp, err := http.Get(tvmazeURL); err == nil {
+		defer resp.Body.Close()
+		var result struct {
+			Externals struct {
+				IMDB string `json:"imdb"`
+			} `json:"externals"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Externals.IMDB != "" {
+			return "https://www.imdb.com/title/" + result.Externals.IMDB + "/"
+		}
+	}
+
+	return ""
+}
 func buildRedeTorrentFallbackQueries(original string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -333,6 +372,11 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			imdbLink = imdb
 		}
 	})
+
+	// Fallback: busca IMDB por título se vazio
+	if imdbLink == "" && title != "" {
+		imdbLink = fetchIMDBByTitle(title, year)
+	}
 
 	if len(magnetLinks) == 0 {
 		return nil, nil
