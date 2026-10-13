@@ -127,15 +127,6 @@ func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTor
 	return filtered
 }
 
-	if emptyTitles > 0 && !i.magnetMetadataAPI.IsEnabled() {
-		logging.WarnWithRequest(r).
-			Int("empty_titles", emptyTitles).
-			Msg("Some torrents have empty titles. Consider setting up MAGNET_METADATA_API (recommended) or set FALLBACK_TITLE_ENABLED=true.")
-	}
-
-	return torrents
-}
-
 func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	q := r.URL.Query().Get("q")
 
