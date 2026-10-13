@@ -197,12 +197,29 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 	// IMDB
 	imdb := ""
+	// 1. Links diretos
 	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
 		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
 			imdb = m
 		}
 	})
+	// 2. Padrão ttXXXXXXX no texto
+	if imdb == "" {
+		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
+			imdb = m
+		}
+	}
+	// 3. Fallback: busca por título
+	if imdb == "" && h1 != "" {
+		if fetched := fetchIMDBByTitle(h1, year); fetched != "" {
+			imdb = fetched
+		}
+	}
+	// Normaliza para URL completa
+	if imdb != "" && !strings.HasPrefix(imdb, "http") {
+		imdb = "https://www.imdb.com/title/" + imdb + "/"
+	}
 
 	// Audio - usa findAudioFromText como torrent-dos-filmes
 	var audio []schema.Audio
@@ -279,9 +296,11 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		// Fallback: detecta áudio pelo título se vazio
 		if len(magnetAudio) == 0 {
 			titleLower := strings.ToLower(releaseTitle)
-			if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
-				strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dual") ||
-				strings.Contains(titleLower, "dublado") {
+			// Dual = Português + Inglês
+			if strings.Contains(titleLower, "dual") {
+				magnetAudio = append(magnetAudio, "Português", "Inglês")
+			} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+				strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
 				magnetAudio = append(magnetAudio, "Português")
 			} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
 				strings.Contains(titleLower, "english") {
