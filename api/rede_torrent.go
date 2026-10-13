@@ -299,21 +299,20 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 	// Size: do texto e download-row
 	var size []string
 	// 1. Spec-text (tamanho do arquivo)
-	doc.Find(".spec-text strong, .download-row, .download-name").Each(func(_ int, s *goquery.Selection) {
+	doc.Find(".spec-text").Each(func(_ int, s *goquery.Selection) {
+		if strings.Contains(strings.ToLower(s.Find("small").Text()), "tamanho") {
+			text := s.Find("strong").Text()
+			// Captura todos os tamanhos (ex: "1.67 GB / 11.42 GB")
+			matches := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindAllString(text, -1)
+			size = append(size, matches...)
+		}
+	})
+	// 2. Download-row
+	doc.Find(".download-row, .download-name").Each(func(_ int, s *goquery.Selection) {
 		text := s.Text()
-		// Captura todos os tamanhos (ex: "1.67 GB / 11.42 GB")
 		matches := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindAllString(text, -1)
 		size = append(size, matches...)
 	})
-	// 2. Fallback: texto geral
-	if len(size) == 0 {
-		doc.Find("p, span, div").Each(func(_ int, s *goquery.Selection) {
-			text := s.Text()
-			if m := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindString(text); m != "" {
-				size = append(size, m)
-			}
-		})
-	}
 	// Remove duplicados
 	seenSize := map[string]bool{}
 	var uniqueSize []string
@@ -401,8 +400,11 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			titleProcessed := processTitle(title, magnetAudio)
 
 			var mySize string
+			// Associa size pelo índice ou usa o primeiro disponível
 			if it < len(size) {
 				mySize = size[it]
+			} else if len(size) > 0 {
+				mySize = size[0]
 			}
 			// Fallback: size do magnet xl=
 			if mySize == "" {
