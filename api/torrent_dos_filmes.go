@@ -180,7 +180,8 @@ func getTorrentsTorrentDosFilmes(ctx context.Context, i *Indexer, link, referer 
     magnet, err := magnet.ParseMagnetUri(magnetLink)
     if err != nil {
         logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-        return // ou continue sem quebrar
+        chanIndexedTorrent <- schema.IndexedTorrent{}
+        return
     }
 			releaseTitle := magnet.DisplayName
 			infoHash := magnet.InfoHash.String()
@@ -226,7 +227,9 @@ func getTorrentsTorrentDosFilmes(ctx context.Context, i *Indexer, link, referer 
 
 	for i := 0; i < len(magnetLinks); i++ {
 		it := <-chanIndexedTorrent
-		indexedTorrents = append(indexedTorrents, it)
+		if it.InfoHash != "" {
+			indexedTorrents = append(indexedTorrents, it)
+		}
 	}
 
 	return indexedTorrents, nil
