@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -121,20 +122,35 @@ func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTor
 
 func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	q := r.URL.Query().Get("q")
+	qLower := strings.ToLower(strings.TrimSpace(q))
 
 	for i, it := range torrents {
-		jLower := strings.ReplaceAll(strings.ToLower(fmt.Sprintf("%s %s", it.Title, it.OriginalTitle)), ".", " ")
-		qLower := strings.ToLower(q)
+		// Extract main title (before year/quality patterns)
+		mainTitle := extractMainTitle(it.Title)
+		originalTitle := extractMainTitle(it.OriginalTitle)
+		
+		// Combine titles for matching
+		combined := strings.ToLower(mainTitle + " " + originalTitle)
+		combined = strings.ReplaceAll(combined, ".", " ")
+		
+		// Compute similarity against main title
 		splitLength := 2
-		torrents[i].Similarity = edlib.JaccardSimilarity(jLower, qLower, splitLength)
+		sim := edlib.JaccardSimilarity(combined, qLower, splitLength)
+		
+		// Boost if query matches the start of main title
+		if strings.HasPrefix(combined, qLower) || strings.Contains(combined, qLower) {
+			sim = max(sim, 0.5)
+		}
+		
+		torrents[i].Similarity = sim
 	}
 
-	// remove the ones with low similarity
-if r.URL.Query().Get("q") != "" {
-    torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-        return it.Similarity >= 0
-    })
-}
+	// Filter low similarity (threshold 0.05)
+	if q != "" {
+		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
+			return it.Similarity >= 0.05
+		})
+	}
 
 	// sort by similarity
 	slices.SortFunc(torrents, func(i, j schema.IndexedTorrent) int {
@@ -142,6 +158,17 @@ if r.URL.Query().Get("q") != "" {
 	})
 
 	return torrents
+}
+
+// extractMainTitle extracts the main title before year/quality patterns
+func extractMainTitle(title string) string {
+	// Remove quality/year patterns: S01E01, 1080p, WEB-DL, etc.
+	re := regexp.MustCompile(`(?i)(s\d+e\d+|1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado).*$`)
+	title = re.ReplaceAllString(title, "")
+	// Remove year patterns
+	reYear := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	title = reYear.ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
 }
 
 // ApplyLimit limits the number of results based on the "limit" query parameter
