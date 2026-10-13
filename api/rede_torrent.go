@@ -278,6 +278,7 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 		titleP = []string{"", h1, "", ""}
 	}
 	title := strings.TrimSpace(titleP[1])
+	year := ""
 	// Year: tenta regex no título, depois no texto
 	yearRe := regexp.MustCompile(`\((\d{4})\)|\b(19|20)\d{2}\b`)
 	if m := yearRe.FindStringSubmatch(title); len(m) > 1 {
