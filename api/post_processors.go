@@ -124,6 +124,10 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	q := r.URL.Query().Get("q")
 	qNorm := normalize(q)
 
+	// Extract episode info from query (e.g. s01e05)
+	epRegex := regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
+	qEpisode := epRegex.FindString(qNorm)
+
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
 		mainTitle := extractMainTitle(it.Title)
@@ -131,6 +135,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		
 		// Normalize for matching
 		combined := normalize(mainTitle + " " + originalTitle)
+		titleNorm := normalize(it.Title)
 		
 		// Compute similarity
 		splitLength := 2
@@ -138,7 +143,14 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		
 		// Boost if query matches the main title
 		if strings.Contains(combined, qNorm) || strings.HasPrefix(combined, qNorm) {
-			sim = max(sim, 0.5)
+			// If query has episode info, only boost if title matches that episode
+			if qEpisode != "" {
+				if strings.Contains(titleNorm, qEpisode) {
+					sim = max(sim, 0.5)
+				}
+			} else {
+				sim = max(sim, 0.5)
+			}
 		}
 		
 		torrents[i].Similarity = sim
