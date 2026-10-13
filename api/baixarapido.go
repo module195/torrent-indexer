@@ -178,18 +178,11 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	if h1 == "" {
 		return nil, fmt.Errorf("no title found at %s", link)
 	}
+	h1 = regexp.MustCompile(`(?i)\s*torrent.*$`).ReplaceAllString(h1, "")
+	h1 = strings.TrimSpace(h1)
 
-	// Year
-	yearRe := regexp.MustCompile(`\((\d{4})\)|\b(19|20)\d{2}\b`)
-	year := ""
-	if m := yearRe.FindStringSubmatch(h1); len(m) > 1 {
-		year = m[1]
-	}
-	if year == "" {
-		if m := yearRe.FindStringSubmatch(doc.Text()); len(m) > 1 {
-			year = m[1]
-		}
-	}
+	// Year - usa findYearFromText como torrent-dos-filmes
+	year := findYearFromText(doc.Text(), h1)
 
 	// IMDB
 	imdb := ""
@@ -200,13 +193,22 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		}
 	})
 
-	// Audio
-	bodyText := doc.Text()
-	audio := findAudioFromText(h1 + " " + bodyText)
+	// Audio - usa findAudioFromText como torrent-dos-filmes
+	var audio []schema.Audio
+	doc.Find("p, div, span, li").Each(func(i int, s *goquery.Selection) {
+		audio = append(audio, findAudioFromText(s.Text())...)
+	})
+	audio = append(audio, findAudioFromText(h1)...)
 
-	// Size: tenta do texto, senão do magnet xl=
-	sizeRe := regexp.MustCompile(`(\d+(?:[.,]\d+)?\s*(?:GB|MB|TB))`)
-	size := sizeRe.FindString(bodyText)
+	// Size - usa findSizesFromText como torrent-dos-filmes
+	var sizes []string
+	doc.Find("p, div, span").Each(func(i int, s *goquery.Selection) {
+		sizes = append(sizes, findSizesFromText(s.Text())...)
+	})
+	size := ""
+	if len(sizes) > 0 {
+		size = sizes[0]
+	}
 
 	// Date
 	date := getPublishedDateFromMeta(doc)
@@ -237,6 +239,12 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			releaseTitle = h1
 		}
 
+		// Audio do magnet - usa getAudioFromTitle como torrent-dos-filmes
+		magnetAudio := getAudioFromTitle(releaseTitle, audio)
+
+		// Title processado - usa processTitle como torrent-dos-filmes
+		titleProcessed := processTitle(h1, magnetAudio)
+
 		// Size do magnet xl= se não encontrou no texto
 		mySize := size
 		if mySize == "" {
@@ -261,11 +269,11 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 		results = append(results, schema.IndexedTorrent{
 			Title:         releaseTitle,
-			OriginalTitle: h1,
+			OriginalTitle: titleProcessed,
 			Details:       link,
 			Year:          year,
 			IMDB:          imdb,
-			Audio:         audio,
+			Audio:         magnetAudio,
 			MagnetLink:    magnetLink,
 			Date:          date,
 			InfoHash:      magnetParsed.InfoHash.String(),
@@ -288,6 +296,10 @@ func cleanBaixarApidoTitle(raw string) string {
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
 
+	// Normaliza pontos e underscores ANTES de checar prefixos
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+
 	// Remove prefixos de sites
 	sitePrefixes := []string{
 		"BAIXARAPIDO COM", "SITEDETORRENTS COM", "HIDRATORRENTS ORG",
@@ -308,8 +320,6 @@ func cleanBaixarApidoTitle(raw string) string {
 		}
 	}
 
-	s = strings.ReplaceAll(s, ".", " ")
-	s = strings.ReplaceAll(s, "_", " ")
 	s = strings.ReplaceAll(s, "-", " ")
 	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
