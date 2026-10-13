@@ -142,7 +142,7 @@ You can integrate this indexer with Prowlarr by adding a custom definition. See 
 ---
 id: torrent-indexer
 name: Torrent Indexer
-description: "Indexing Brazilian Torrent websites into structured data. github.com/felipemarinho97/torrent-indexer"
+description: "Indexing Brazilian Torrent websites into structured data. github.com/module195/torrent-indexer"
 language: pt-BR
 type: public
 encoding: UTF-8

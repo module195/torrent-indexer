@@ -7,7 +7,7 @@ import (
 
 	"os"
 
-	"github.com/felipemarinho97/torrent-indexer/logging"
+	"github.com/module195/torrent-indexer/logging"
 )
 
 // Filter filters a slice based on a predicate function.

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	meilisearch "github.com/felipemarinho97/torrent-indexer/search"
+	meilisearch "github.com/module195/torrent-indexer/search"
 )
 
 // MeilisearchHandler handles HTTP requests for Meilisearch integration.
