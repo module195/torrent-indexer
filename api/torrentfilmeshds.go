@@ -343,6 +343,9 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
 
+			// Title processado - usa processTitle como torrent-dos-filmes
+			titleProcessed := processTitle(title, magnetAudio)
+
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
 			if err != nil {
 				peer, seed = 0, 0
@@ -355,7 +358,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 
 			ixt := schema.IndexedTorrent{
 				Title:         releaseTitle,
-				OriginalTitle: title,
+				OriginalTitle: titleProcessed,
 				Details:       link,
 				Year:          year,
 				IMDB:          imdbLink,
