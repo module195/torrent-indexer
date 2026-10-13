@@ -290,9 +290,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			releaseTitle = h1
 		}
 		// Remove prefixo BAIXARAPIDO.COM-...-
-		releaseTitle = regexp.MustCompile(`(?i)^BAIXARAPIDO\.COM-[^.]*-\.`).ReplaceAllString(releaseTitle, "")
-		// Remove sufixos de qualidade/áudio no início
-		releaseTitle = regexp.MustCompile(`(?i)^[A-Z0-9.-]+\.(COM|NET|ORG)\.[^.]*-\.`).ReplaceAllString(releaseTitle, "")
+		releaseTitle = regexp.MustCompile(`(?i)^BAIXARAPIDO\.COM-.*?-\.`).ReplaceAllString(releaseTitle, "")
 		releaseTitle = strings.TrimSpace(releaseTitle)
 
 		// Audio do magnet - usa getAudioFromTitle como torrent-dos-filmes
