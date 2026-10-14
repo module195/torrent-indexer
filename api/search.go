@@ -116,8 +116,8 @@ func normalizeQuery(q string) string {
 	}
 	// Replace + with space
 	q = strings.ReplaceAll(q, "+", " ")
-	// Remove special chars except alphanumeric, spaces, and common punctuation
-	q = regexp.MustCompile(`[^\w\s\-:]`).ReplaceAllString(q, " ")
+	// Remove special chars (including colon) except alphanumeric, spaces, hyphens
+	q = regexp.MustCompile(`[^\w\s\-]`).ReplaceAllString(q, " ")
 	// Collapse multiple spaces
 	q = regexp.MustCompile(`\s+`).ReplaceAllString(q, " ")
 	return strings.TrimSpace(q)
@@ -140,14 +140,12 @@ func shouldTryTranslation(query string, results []schema.IndexedTorrent) bool {
 
 // translateToPT attempts to translate common English movie titles to Portuguese
 func translateToPT(query string) string {
-	// Common translations
+	// Common translations (normalized, no special chars)
 	translations := map[string]string{
 		"spider man brand new day":    "homem aranha um novo dia",
-		"spider-man brand new day":    "homem aranha um novo dia",
-		"spiderman brand new day":     "homem aranha um novo dia",
+		"spider man":                  "homem aranha",
+		"spiderman":                   "homem aranha",
 		"the batman":                  "batman",
-		"batman":                      "batman",
-		"superman":                    "superman",
 		"avengers":                    "vingadores",
 		"iron man":                    "homem de ferro",
 		"captain america":             "capitao america",
@@ -155,16 +153,9 @@ func translateToPT(query string) string {
 		"doctor strange":              "doutor estranho",
 		"guardians of the galaxy":     "guardioes da galaxia",
 		"ant man":                     "homem formiga",
-		"thor":                        "thor",
-		"hulk":                        "hulk",
 		"black panther":               "pantera negra",
 		"wonder woman":                "mulher maravilha",
-		"aquaman":                     "aquaman",
-		"flash":                       "flash",
 		"joker":                       "coringa",
-		"deadpool":                    "deadpool",
-		"wolverine":                   "wolverine",
-		"x men":                       "x men",
 		"fantastic four":              "quarteto fantastico",
 	}
 
@@ -175,11 +166,24 @@ func translateToPT(query string) string {
 		return pt
 	}
 	
-	// Partial match
-	for en, pt := range translations {
+	// Partial match (longest first)
+	var matches []string
+	for en := range translations {
 		if strings.Contains(qLower, en) {
-			return strings.Replace(qLower, en, pt, 1)
+			matches = append(matches, en)
 		}
+	}
+	// Sort by length descending to match longest first
+	for i := 0; i < len(matches); i++ {
+		for j := i + 1; j < len(matches); j++ {
+			if len(matches[j]) > len(matches[i]) {
+				matches[i], matches[j] = matches[j], matches[i]
+			}
+		}
+	}
+	if len(matches) > 0 {
+		en := matches[0]
+		return strings.Replace(qLower, en, translations[en], 1)
 	}
 	
 	return query
