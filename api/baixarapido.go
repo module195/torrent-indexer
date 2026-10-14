@@ -106,15 +106,15 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	var allTorrents []schema.IndexedTorrent
-	for _, link := range links {
+	// Paralelo: cada página é processada em goroutine
+	allTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
 		torrents, err := getTorrentsBaixarApido(ctx, i, link)
 		if err != nil {
 			logging.Error().Err(err).Str("link", link).Msg("Failed to get torrents")
-			continue
+			return nil, err
 		}
-		allTorrents = append(allTorrents, torrents...)
-	}
+		return torrents, nil
+	})
 
 	// Ordena: seeders desc, year desc, title asc
 	sort.SliceStable(allTorrents, func(a, b int) bool {
