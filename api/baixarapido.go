@@ -51,11 +51,12 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			decoded = q
 		}
-		// Also handle + as space
 		decoded = strings.ReplaceAll(decoded, "+", " ")
 		
-		// Now encode for path (site uses + for spaces)
-		encoded := strings.ReplaceAll(url.PathEscape(decoded), "%20", "+")
+		// Use quotes for exact match (site supports this)
+		// "Spider Man Brand New Day" finds only the exact movie
+		quotedQuery := `"` + decoded + `"`
+		encoded := strings.ReplaceAll(url.PathEscape(quotedQuery), "%20", "+")
 		targetURL = base + "/pesquisa/" + encoded + "/"
 		if page != "1" {
 			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", encoded, page)
