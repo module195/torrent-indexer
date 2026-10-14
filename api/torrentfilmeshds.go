@@ -361,8 +361,9 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	audio = append(audio, findAudioFromText(title)...)
 	size = utils.StableUniq(size)
 
-	// Collect magnets from link.php pages
-	var magnetLinks []string
+	// Collect magnets from link.php pages (paralelo)
+	var linkPHPURLs []string
+	baseURL := strings.TrimRight(torrentFilmesHDs.URL, "/")
 	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if !exists || href == "" {
@@ -370,12 +371,27 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		}
 		fullURL := href
 		if strings.HasPrefix(href, "/") {
-			fullURL = torrentFilmesHDs.URL + href
+			fullURL = baseURL + href
 		}
-		if mag := resolveLinkPHP(ctx, i, fullURL); mag != "" {
-			magnetLinks = append(magnetLinks, mag)
-		}
+		linkPHPURLs = append(linkPHPURLs, fullURL)
 	})
+
+	var magnetLinks []string
+	if len(linkPHPURLs) > 0 {
+		type magResult struct{ mag string }
+		ch := make(chan magResult, len(linkPHPURLs))
+		for _, u := range linkPHPURLs {
+			u := u
+			go func() {
+				ch <- magResult{mag: resolveLinkPHP(ctx, i, u)}
+			}()
+		}
+		for range linkPHPURLs {
+			if r := <-ch; r.mag != "" {
+				magnetLinks = append(magnetLinks, r.mag)
+			}
+		}
+	}
 
 	// Also check for direct magnets
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
