@@ -498,7 +498,7 @@ func cleanRedeTorrentTitle(raw string) string {
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
 
-	// Normaliza pontos e underscores ANTES de checar prefixos
+	// Normaliza pontos e underscores
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 
@@ -511,13 +511,20 @@ func cleanRedeTorrentTitle(raw string) string {
 		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*[-.]?\s*`).ReplaceAllString(s, "")
 	}
 
-	// Remove padrões de episódio no início (EPISODIO-04, EPISODIOS-01-E-02)
-	s = regexp.MustCompile(`(?i)^EPISODIO[S]?\s*[-.]?\s*\d+(\s*[-E]\s*\d+)?\s*[-.]?\s*`).ReplaceAllString(s, "")
+	// Remove padrões de episódio no início (EPISODIO-04, EPISODIOS-01-E-02, E-02, etc)
+	episodePrefix := `(?i)^[-.\s]*(EPISODIO[S]?|EP)[\s.-]*\d+([\s.-]*[E]\s*\d+)?[\s.-]*`
+	s = regexp.MustCompile(episodePrefix).ReplaceAllString(s, "")
+	// Remove restos como "E 02" no início
+	s = regexp.MustCompile(`(?i)^[-.\s]*E[\s.-]*\d+[\s.-]*`).ReplaceAllString(s, "")
 
-	// Remove tags de qualidade/áudio no início (WEB-DL, 1080P, MKV, DUBLADO, etc)
-	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|MKV|MP4|X264|X265|HEVC|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO|AAC|AC3|DTS)\s*[-.\s]*`
-	for i := 0; i < 5; i++ { // múltiplas passadas
+	// Remove tags de qualidade/áudio no início (múltiplas passadas)
+	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|2160P|MKV|MP4|X264|X265|HEVC|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO|AAC|AC3|DTS|H264|H265)\s*[-.\s]*`
+	for i := 0; i < 8; i++ {
+		prev := s
 		s = regexp.MustCompile(qualityPrefix).ReplaceAllString(s, "")
+		if s == prev {
+			break
+		}
 	}
 
 	// Preserva tags com hífen no meio do título
