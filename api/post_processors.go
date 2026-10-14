@@ -56,6 +56,9 @@ func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedT
 
 // FullfilMissingMetadata fills in missing metadata for indexed torrents
 func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	if !i.magnetMetadataAPI.IsEnabled() {
 		return torrents
 	}
@@ -99,6 +102,9 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 }
 
 func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	emptyTitles := 0
 
 	for idx := range torrents {
@@ -224,6 +230,9 @@ func extractMainTitle(title string) string {
 
 // ApplyLimit limits the number of results based on the "limit" query parameter
 func ApplyLimit(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	limitStr := r.URL.Query().Get("limit")
 	if limitStr == "" {
 		return torrents
@@ -243,6 +252,9 @@ func ApplyLimit(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) [
 
 // ApplySorting sorts the results based on "sortBy" and "sortDirection" query parameters
 func ApplySorting(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	sortBy := r.URL.Query().Get("sortBy")
 	q := r.URL.Query().Get("q")
 	if sortBy == "" {
@@ -306,6 +318,9 @@ func ApplySorting(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent)
 
 // FilterBy filters the results based on various query parameters
 func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	// Parse filter parameters
 	audioParam := r.URL.Query().Get("audio")
 	yearParam := r.URL.Query().Get("year")
