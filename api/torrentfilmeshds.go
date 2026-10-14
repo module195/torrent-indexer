@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,9 +330,14 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			imdbLink = m
 		}
 	}
-	// 3. Fallback: busca por título
+	// 3. Fallback: busca por título (limpa temporada/episódio/tags antes)
 	if imdbLink == "" && title != "" {
-		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
+		searchTitle := title
+		searchTitle = regexp.MustCompile(`(?i)\s*\d+[ªºa]?\s*temporada\s*`).ReplaceAllString(searchTitle, " ")
+		searchTitle = regexp.MustCompile(`(?i)\s*(torrent|download|dual|áudio|audio|dublado|legendado|brazilian)\s*`).ReplaceAllString(searchTitle, " ")
+		searchTitle = regexp.MustCompile(`\([^)]*\)`).ReplaceAllString(searchTitle, " ")
+		searchTitle = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(searchTitle), " ")
+		if fetched := fetchIMDBByTitle(searchTitle, ""); fetched != "" {
 			imdbLink = fetched
 		}
 	}
@@ -445,6 +451,14 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			if it < len(size) {
 				mySize = size[it]
 			}
+			// Fallback: xl= do magnet (exact length em bytes)
+			if mySize == "" {
+				if xl := magnetParsed.Params.Get("xl"); xl != "" {
+					if n, err := strconv.ParseInt(xl, 10, 64); err == nil && n > 0 {
+						mySize = utils.FormatBytes(n)
+					}
+				}
+			}
 
 			ixt := schema.IndexedTorrent{
 				Title:         releaseTitle,
@@ -479,8 +493,8 @@ var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 
 func normalizeMagnet(mag string) string {
 	mag = strings.TrimSpace(mag)
-	// Decodifica entidades HTML
-	mag = strings.ReplaceAll(mag, "&", "&")
+	// Decodifica entidades HTML (necessário para extrair dn= e xl=)
+	mag = strings.ReplaceAll(mag, "&amp;", "&")
 	mag = strings.ReplaceAll(mag, "&#38;", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
