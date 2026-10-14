@@ -81,6 +81,14 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 
 	resp := v.(Response)
 
+	// Aplica post-processors no handler, onde o *http.Request existe
+	torrents := resp.Results
+	for _, processor := range i.postProcessors {
+		torrents = processor(i, r, torrents)
+	}
+	resp.Results = torrents
+	resp.Count = len(torrents)
+
 	// 3. Serializa e cacheia o resultado
 	body, err := json.Marshal(resp)
 	if err == nil {
@@ -156,18 +164,10 @@ func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Re
 		return getTorrentsTorrentFilmesHDs(ctx, i, link)
 	})
 
-	// Post-processors precisam do request original; aqui aplicamos os que não dependem de r.
-	// Os que dependem de query params (FilterBy, ApplyLimit, ApplySorting) devem ser aplicados
-	// no handler se necessário, ou o cache deve ser por combinação de params relevantes.
-	postProcessedTorrents := indexedTorrents
-	for _, processor := range i.postProcessors {
-		// Passa nil request — processors que precisam de r devem ser tolerantes ou aplicados fora
-		postProcessedTorrents = processor(i, nil, postProcessedTorrents)
-	}
-
+	// Post-processors são aplicados no handler (onde o *http.Request existe)
 	return Response{
-		Results:      postProcessedTorrents,
-		Count:        len(postProcessedTorrents),
+		Results:      indexedTorrents,
+		Count:        len(indexedTorrents),
 		IndexedCount: len(indexedTorrents),
 	}, nil
 }
