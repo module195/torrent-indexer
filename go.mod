@@ -4,18 +4,10 @@ go 1.24.1
 
 toolchain go1.24.5
 
-require (
-	github.com/PuerkitoBio/goquery v1.10.3
-	github.com/fereidani/httpdecompressor v0.0.0-20250320190614-ccdf59c9caa2
-	github.com/hbollon/go-edlib v1.6.0
-	github.com/prometheus/client_golang v1.22.0
-	github.com/redis/go-redis/v9 v9.11.0
-	github.com/rs/zerolog v1.33.0
-	github.com/xhit/go-str2duration/v2 v2.1.0
-	golang.org/x/sync v0.24.0
-)
+require github.com/redis/go-redis/v9 v9.11.0
 
 require (
+    golang.org/x/sync v0.24.0
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -33,4 +25,13 @@ require (
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
+)
+
+require (
+	github.com/PuerkitoBio/goquery v1.10.3
+	github.com/fereidani/httpdecompressor v0.0.0-20250320190614-ccdf59c9caa2
+	github.com/hbollon/go-edlib v1.6.0
+	github.com/prometheus/client_golang v1.22.0
+	github.com/rs/zerolog v1.33.0
+	github.com/xhit/go-str2duration/v2 v2.1.0
 )
