@@ -374,19 +374,40 @@ func cleanBaixarApidoTitle(raw string) string {
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
 
-	// Normaliza pontos, underscores e + 
+	// Normaliza pontos, underscores e +
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	s = strings.ReplaceAll(s, "+", " ")
 
-	// Remove prefixos de sites
+	// Remove prefixos de sites (lista expandida)
 	sitePrefixes := []string{
+		// Originais
 		"BAIXARAPIDO COM", "SITEDETORRENTS COM", "HIDRATORRENTS ORG",
 		"VAMOSTORRENT COM", "TORRENTFILMESHDS", "BLUDV",
+		// Novos (dos resultados)
+		"VEMTORRENT COM", "COMOEUBAIXO COM", "VACATORRENT COM",
+		"HIDRATORRENT COM", "STARCKFILMES", "TDF",
+		"COMANDO TORRENTS", "COMANDO1", "REDE TORRENT",
+		"VACA TORRENT", "VIA FILMES", "BAIXANDO TORRENTS",
 	}
 	for _, prefix := range sitePrefixes {
 		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*[-.]?\s*`).ReplaceAllString(s, "")
 	}
+
+	// Padrão genérico: remove qualquer "*TORRENT COM" ou "*TORRENTS COM" no início
+	s = regexp.MustCompile(`(?i)^[A-Z]+TORRENTS?\s+COM\s*[-.]?\s*`).ReplaceAllString(s, "")
+
+	// Remove [UNSAFE]
+	s = regexp.MustCompile(`(?i)^\[UNSAFE\]\s*`).ReplaceAllString(s, "")
+
+	// Remove "EPISODIO XX" no início
+	s = regexp.MustCompile(`(?i)^EPISODIO\s+\d+\s+`).ReplaceAllString(s, "")
+
+	// Remove tipo arquivo no início
+	s = regexp.MustCompile(`(?i)^(MP4|MKV|AVI)\s+`).ReplaceAllString(s, "")
+
+	// Remove LEGENDADO/DUBLADO no início
+	s = regexp.MustCompile(`(?i)^(LEGENDADO|DUBLADO|DUAL-AUDIO|DUAL)\s+`).ReplaceAllString(s, "")
 
 	// Remove tags de qualidade no início
 	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|MKV|MP4|X264|X265|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO)\s*[-.\s]*`
