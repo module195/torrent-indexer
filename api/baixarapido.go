@@ -52,15 +52,14 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		}
 		decoded = strings.ReplaceAll(decoded, "+", " ")
 		
-		// Double encode for baixarapido (site-specific behavior)
-		// Spider Man Brand New Day → Spider%252BMan%252BBrand%252BNew%252BDay
-		// This finds exact matches instead of word-by-word search
-		firstEncode := strings.ReplaceAll(url.QueryEscape(decoded), "+", "%2B")
-		doubleEncode := strings.ReplaceAll(url.QueryEscape(firstEncode), "+", "%2B")
+		// Use quotes for exact match (site-specific)
+		// "Spider Man Brand New Day" finds only the exact movie
+		quotedQuery := `"` + decoded + `"`
+		encoded := strings.ReplaceAll(url.PathEscape(quotedQuery), "%20", "+")
 		
-		targetURL = base + "/pesquisa/" + doubleEncode + "/"
+		targetURL = base + "/pesquisa/" + encoded + "/"
 		if page != "1" {
-			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", doubleEncode, page)
+			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", encoded, page)
 		}
 	} else {
 		targetURL = strings.TrimRight(baixarapido.URL, "/")
