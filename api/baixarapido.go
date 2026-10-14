@@ -298,9 +298,8 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		if releaseTitle == "" {
 			releaseTitle = h1
 		}
-		// Remove prefixo BAIXARAPIDO.COM-...-
-		releaseTitle = regexp.MustCompile(`(?i)^BAIXARAPIDO\.COM-.*?-\.`).ReplaceAllString(releaseTitle, "")
-		releaseTitle = strings.TrimSpace(releaseTitle)
+		// Limpa prefixo BAIXARAPIDO.COM e tags
+		releaseTitle = cleanBaixarApidoTitle(releaseTitle)
 
 		// Audio do magnet - usa getAudioFromTitle como torrent-dos-filmes
 		magnetAudio := getAudioFromTitle(releaseTitle, audio)
@@ -374,9 +373,10 @@ func cleanBaixarApidoTitle(raw string) string {
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
 
-	// Normaliza pontos e underscores ANTES de checar prefixos
+	// Normaliza pontos, underscores e + 
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "+", " ")
 
 	// Remove prefixos de sites
 	sitePrefixes := []string{
@@ -384,7 +384,17 @@ func cleanBaixarApidoTitle(raw string) string {
 		"VAMOSTORRENT COM", "TORRENTFILMESHDS", "BLUDV",
 	}
 	for _, prefix := range sitePrefixes {
-		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*`).ReplaceAllString(s, "")
+		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*[-.]?\s*`).ReplaceAllString(s, "")
+	}
+
+	// Remove tags de qualidade no início
+	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|MKV|MP4|X264|X265|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO)\s*[-.\s]*`
+	for i := 0; i < 5; i++ {
+		prev := s
+		s = regexp.MustCompile(qualityPrefix).ReplaceAllString(s, "")
+		if s == prev {
+			break
+		}
 	}
 
 	// Preserva tags com hífen
