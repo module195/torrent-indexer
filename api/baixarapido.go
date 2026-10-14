@@ -53,7 +53,6 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		decoded = strings.ReplaceAll(decoded, "+", " ")
 		
 		// Use quotes for exact match (site-specific)
-		// "Spider Man Brand New Day" finds only the exact movie
 		quotedQuery := `"` + decoded + `"`
 		encoded := strings.ReplaceAll(url.PathEscape(quotedQuery), "%20", "+")
 		
@@ -302,6 +301,14 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		// Limpa prefixo BAIXARAPIDO.COM e tags
 		releaseTitle = cleanBaixarApidoTitle(releaseTitle)
 
+		// Se o título limpo parece só ter info de episódio/qualidade, prepende h1
+		if needsTitlePrefix(releaseTitle) && h1 != "" {
+			cleanH1 := cleanBaixarApidoTitle(h1)
+			if cleanH1 != "" && !strings.Contains(strings.ToLower(releaseTitle), strings.ToLower(cleanH1)) {
+				releaseTitle = cleanH1 + " " + releaseTitle
+			}
+		}
+
 		// Audio do magnet - usa getAudioFromTitle como torrent-dos-filmes
 		magnetAudio := getAudioFromTitle(releaseTitle, audio)
 
@@ -439,4 +446,21 @@ func cleanBaixarApidoTitle(raw string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// needsTitlePrefix verifica se o título parece só ter info de episódio/qualidade
+func needsTitlePrefix(title string) bool {
+	patterns := []string{
+		`^S\d{2}E\d{2}`,           // S01E04
+		`^EPISODIO\s+\d+`,         // EPISODIO 10
+		`^\d{3,4}P\s`,             // 1080P no início
+		`^(MKV|MP4|AVI)\s`,        // Tipo arquivo no início
+		`^(DUBLADO|LEGENDADO)\s`,  // Áudio no início
+	}
+	for _, p := range patterns {
+		if regexp.MustCompile(`(?i)`+p).MatchString(title) {
+			return true
+		}
+	}
+	return false
 }
