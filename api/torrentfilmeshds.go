@@ -32,7 +32,10 @@ var tfhdsSF singleflight.Group
 
 // Cache de resultado por query (TTL curto, complementa o cache de documentos do Redis)
 const tfhdsResultCacheTTL = 5 * time.Minute
-
+// isIMDBQuery checks if the query is an IMDB ID (e.g. "tt1234567")
+func isIMDBQuery(q string) bool {
+	return regexp.MustCompile(`^tt\d{7,8}$`).MatchString(strings.TrimSpace(q))
+}
 func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	defer func() {
