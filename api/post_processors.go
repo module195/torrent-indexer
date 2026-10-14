@@ -121,8 +121,11 @@ func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTor
 }
 
 func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	if r == nil {
+		return torrents
+	}
 	q := r.URL.Query().Get("q")
-	qNorm := normalize(q)
+	// ... resto
 
 	// Extract episode info from query (e.g. s01e05)
 	epRegex := regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
