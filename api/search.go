@@ -65,6 +65,9 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Apply similarity filter (same as indexers)
+	results = AddSimilarityCheck(nil, r, results)
+
 	// Format response to match indexers structure
 	response := map[string]interface{}{
 		"results": results,
