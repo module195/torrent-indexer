@@ -45,8 +45,17 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 	if q != "" {
 		// Remove trailing slash do base e leading slash do SearchURL para evitar //
 		base := strings.TrimRight(baixarapido.URL, "/")
-		// O site usa + para espaços
-		encoded := strings.ReplaceAll(url.PathEscape(q), "%20", "+")
+		
+		// Decode first to avoid double encoding
+		decoded, err := url.QueryUnescape(q)
+		if err != nil {
+			decoded = q
+		}
+		// Also handle + as space
+		decoded = strings.ReplaceAll(decoded, "+", " ")
+		
+		// Now encode for path (site uses + for spaces)
+		encoded := strings.ReplaceAll(url.PathEscape(decoded), "%20", "+")
 		targetURL = base + "/pesquisa/" + encoded + "/"
 		if page != "1" {
 			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", encoded, page)
