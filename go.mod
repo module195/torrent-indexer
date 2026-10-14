@@ -7,6 +7,7 @@ toolchain go1.24.5
 require github.com/redis/go-redis/v9 v9.11.0
 
 require (
+    golang.org/x/sync/singleflight
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
