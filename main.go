@@ -92,6 +92,9 @@ func main() {
 	indexerMux.HandleFunc("/indexers/comando_torrents", indexers.HandlerComandoIndexer)
 	//indexerMux.HandleFunc("/indexers/rede_torrent", indexers.HandlerRedeTorrentIndexer)
 	//indexerMux.HandleFunc("/indexers/starck-filmes", indexers.HandlerStarckFilmesIndexer)
+	indexerMux.HandleFunc("/indexers/starck-filmes", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"indexer disabled"}`, http.StatusNotFound)
+	})
 	indexerMux.HandleFunc("/indexers/torrent-dos-filmes", indexers.HandlerTorrentDosFilmesIndexer)
 	//indexerMux.HandleFunc("/indexers/bludv", indexers.HandlerBluDVIndexer)
 	//indexerMux.HandleFunc("/indexers/vaca_torrent", indexers.HandlerVacaTorrentIndexer)
