@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -18,6 +20,27 @@ import (
 
 	str2duration "github.com/xhit/go-str2duration/v2"
 )
+
+// imdbQueryRE matches IMDB IDs (tt followed by 7-8 digits)
+var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
+
+// skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
+// Brazilian torrent sites don't support IMDB search, so we skip these
+// queries to avoid unnecessary FlareSolverr requests.
+func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if imdbQueryRE.MatchString(q) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"results": []interface{}{},
+				"count":   0,
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func main() {
 	// Initialize logging first
@@ -103,6 +126,7 @@ func main() {
 	indexerMux.HandleFunc("/search/stats", search.StatsHandler)
 	indexerMux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(public.UIFiles))))
 	loggedIndexerMux := logging.HTTPLoggingMiddleware(indexerMux)
+	loggedIndexerMux = skipIMDBQueryMiddleware(loggedIndexerMux)
 
 	metricsMux.Handle("/metrics", promhttp.Handler())
 
