@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/magnet"
@@ -26,6 +27,12 @@ var torrentFilmesHDs = IndexerMeta{
 	PagePattern: "page/%s/",
 }
 
+// singleflight para coalescer requests idênticos concorrentes
+var tfhdsSF singleflight.Group
+
+// Cache de resultado por query (TTL curto, complementa o cache de documentos do Redis)
+const tfhdsResultCacheTTL = 5 * time.Minute
+
 func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	defer func() {
@@ -39,6 +46,55 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 		page = "1"
 	}
 
+	// Skip IMDB queries - sites BR don't index by IMDB ID
+	if isIMDBQuery(q) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Response{Results: []schema.IndexedTorrent{}, Count: 0})
+		return
+	}
+
+	// Chave de cache/singleflight: query + página
+	cacheKey := fmt.Sprintf("tfhds:result:%s:%s", q, page)
+
+	// 1. Tenta cache de resultado (Redis)
+	if cached, err := i.redis.Get(ctx, cacheKey); err == nil && len(cached) > 0 {
+		i.metrics.CacheHits.WithLabelValues("tfhds_result").Inc()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		_, _ = w.Write(cached)
+		return
+	}
+	i.metrics.CacheMisses.WithLabelValues("tfhds_result").Inc()
+
+	// 2. Singleflight: só uma execução por cacheKey concorrente
+	v, err, shared := tfhdsSF.Do(cacheKey, func() (interface{}, error) {
+		return i.fetchTorrentFilmesHDs(ctx, q, page)
+	})
+	if err != nil {
+		logging.Error().Err(err).Str("q", q).Msg("Failed to fetch torrentfilmeshds")
+		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+		return
+	}
+
+	resp := v.(Response)
+
+	// 3. Serializa e cacheia o resultado
+	body, err := json.Marshal(resp)
+	if err == nil {
+		_ = i.redis.Set(ctx, cacheKey, body)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if shared {
+		w.Header().Set("X-Cache", "SHARED")
+	} else {
+		w.Header().Set("X-Cache", "MISS")
+	}
+	_, _ = w.Write(body)
+}
+
+// fetchTorrentFilmesHDs faz o trabalho pesado (busca + scrape) isolado do handler HTTP.
+func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Response, error) {
 	var targetURL string
 	if q != "" {
 		targetURL = torrentFilmesHDs.URL + torrentFilmesHDs.SearchURL + url.QueryEscape(q)
@@ -52,16 +108,13 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	}
 
 	logging.Info().
-		Str("url", r.URL.String()).
 		Str("target_url", targetURL).
-		Str("method", r.Method).
+		Str("q", q).
 		Msg("Processing indexer request")
 
 	doc, err := getDocument(ctx, i, targetURL, torrentFilmesHDs.URL)
 	if err != nil {
-		logging.Error().Err(err).Str("url", targetURL).Msg("Failed to get document")
-		http.Error(w, "Failed to fetch page", http.StatusInternalServerError)
-		return
+		return Response{}, fmt.Errorf("failed to get document: %w", err)
 	}
 
 	links := extractTorrentFilmesHDsLinks(doc)
@@ -93,28 +146,27 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 
 	if len(links) == 0 {
 		logging.Info().Str("url", targetURL).Msg("No links found")
-		_ = json.NewEncoder(w).Encode(Response{
-			Results: []schema.IndexedTorrent{},
-			Count:   0,
-		})
-		return
+		return Response{Results: []schema.IndexedTorrent{}, Count: 0}, nil
 	}
 
 	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
 		return getTorrentsTorrentFilmesHDs(ctx, i, link)
 	})
 
+	// Post-processors precisam do request original; aqui aplicamos os que não dependem de r.
+	// Os que dependem de query params (FilterBy, ApplyLimit, ApplySorting) devem ser aplicados
+	// no handler se necessário, ou o cache deve ser por combinação de params relevantes.
 	postProcessedTorrents := indexedTorrents
 	for _, processor := range i.postProcessors {
-		postProcessedTorrents = processor(i, r, postProcessedTorrents)
+		// Passa nil request — processors que precisam de r devem ser tolerantes ou aplicados fora
+		postProcessedTorrents = processor(i, nil, postProcessedTorrents)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(Response{
+	return Response{
 		Results:      postProcessedTorrents,
 		Count:        len(postProcessedTorrents),
 		IndexedCount: len(indexedTorrents),
-	})
+	}, nil
 }
 
 // buildTorrentFilmesHDsFallbackQueries gera buscas alternativas quando a original falha.
@@ -425,7 +477,7 @@ var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 func normalizeMagnet(mag string) string {
 	mag = strings.TrimSpace(mag)
 	// Decodifica entidades HTML
-	mag = strings.ReplaceAll(mag, "&amp;", "&")
+	mag = strings.ReplaceAll(mag, "&", "&")
 	mag = strings.ReplaceAll(mag, "&#38;", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
