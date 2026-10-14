@@ -3,9 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/module195/torrent-indexer/schema"
 	meilisearch "github.com/module195/torrent-indexer/search"
 )
 
@@ -45,11 +49,14 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		query = time.Now().Format("2006-01-02") // needed for prowlar/jackett empty queries
+		query = time.Now().Format("2006-01-02")
 	}
 
+	// Normalize query (decode URL, clean special chars)
+	query = normalizeQuery(query)
+
 	limitStr := r.URL.Query().Get("limit")
-	limit := 100 // Default limit
+	limit := 100
 	if limitStr != "" {
 		var err error
 		limit, err = strconv.Atoi(limitStr)
@@ -59,16 +66,36 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		}
 	}
 
+	// Try original query
 	results, err := h.Module.SearchTorrent(query, limit)
 	if err != nil {
 		http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 		return
 	}
 
-	// Apply similarity filter (same as indexers)
+	// Apply similarity filter
 	results = AddSimilarityCheck(nil, r, results)
 
-	// Format response to match indexers structure
+	// If poor results and query looks English, try Portuguese translation
+	if shouldTryTranslation(query, results) {
+		ptQueryStr := translateToPT(query)
+		if ptQueryStr != query {
+			ptResults, err := h.Module.SearchTorrent(ptQueryStr, limit)
+			if err == nil && len(ptResults) > 0 {
+				// Create a new request with translated query for similarity check
+				ptRequest := r.Clone(r.Context())
+				q := ptRequest.URL.Query()
+				q.Set("q", ptQueryStr)
+				ptRequest.URL.RawQuery = q.Encode()
+				
+				ptResults = AddSimilarityCheck(nil, ptRequest, ptResults)
+				if len(ptResults) > len(results) {
+					results = ptResults
+				}
+			}
+		}
+	}
+
 	response := map[string]interface{}{
 		"results": results,
 		"count":   len(results),
@@ -80,6 +107,85 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	}
 }
 
+// normalizeQuery cleans the query string
+func normalizeQuery(q string) string {
+	// URL decode
+	decoded, err := url.QueryUnescape(q)
+	if err == nil {
+		q = decoded
+	}
+	// Replace + with space
+	q = strings.ReplaceAll(q, "+", " ")
+	// Remove special chars except alphanumeric, spaces, and common punctuation
+	q = regexp.MustCompile(`[^\w\s\-:]`).ReplaceAllString(q, " ")
+	// Collapse multiple spaces
+	q = regexp.MustCompile(`\s+`).ReplaceAllString(q, " ")
+	return strings.TrimSpace(q)
+}
+
+// shouldTryTranslation checks if we should try a Portuguese translation
+func shouldTryTranslation(query string, results []schema.IndexedTorrent) bool {
+	// If no results or all results have low similarity
+	if len(results) == 0 {
+		return true
+	}
+	// Check if best result has low similarity
+	if len(results) > 0 && results[0].Similarity < 0.3 {
+		return true
+	}
+	// Check if query looks English (no Portuguese chars)
+	hasPT := regexp.MustCompile(`[áéíóúãõç]`).MatchString(strings.ToLower(query))
+	return !hasPT
+}
+
+// translateToPT attempts to translate common English movie titles to Portuguese
+func translateToPT(query string) string {
+	// Common translations
+	translations := map[string]string{
+		"spider man brand new day":    "homem aranha um novo dia",
+		"spider-man brand new day":    "homem aranha um novo dia",
+		"spiderman brand new day":     "homem aranha um novo dia",
+		"the batman":                  "batman",
+		"batman":                      "batman",
+		"superman":                    "superman",
+		"avengers":                    "vingadores",
+		"iron man":                    "homem de ferro",
+		"captain america":             "capitao america",
+		"black widow":                 "viuva negra",
+		"doctor strange":              "doutor estranho",
+		"guardians of the galaxy":     "guardioes da galaxia",
+		"ant man":                     "homem formiga",
+		"thor":                        "thor",
+		"hulk":                        "hulk",
+		"black panther":               "pantera negra",
+		"wonder woman":                "mulher maravilha",
+		"aquaman":                     "aquaman",
+		"flash":                       "flash",
+		"joker":                       "coringa",
+		"deadpool":                    "deadpool",
+		"wolverine":                   "wolverine",
+		"x men":                       "x men",
+		"fantastic four":              "quarteto fantastico",
+	}
+
+	qLower := strings.ToLower(query)
+	
+	// Direct match
+	if pt, ok := translations[qLower]; ok {
+		return pt
+	}
+	
+	// Partial match
+	for en, pt := range translations {
+		if strings.Contains(qLower, en) {
+			return strings.Replace(qLower, en, pt, 1)
+		}
+	}
+	
+	return query
+}
+
+
 // HealthHandler provides a health check endpoint for Meilisearch.
 func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -89,7 +195,6 @@ func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// Check if Meilisearch is healthy
 	isHealthy := h.Module.IsHealthy()
 
 	response := HealthResponse{
@@ -98,7 +203,6 @@ func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	if isHealthy {
-		// Try to get additional stats for more detailed health info
 		stats, err := h.Module.GetStats()
 		if err == nil {
 			response.Status = "healthy"
@@ -108,7 +212,6 @@ func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Reques
 			}
 			w.WriteHeader(http.StatusOK)
 		} else {
-			// Service is up but can't get stats
 			response.Status = "degraded"
 			response.Details = map[string]interface{}{
 				"error": "Could not retrieve stats",
@@ -116,7 +219,6 @@ func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Reques
 			w.WriteHeader(http.StatusOK)
 		}
 	} else {
-		// Service is down
 		response.Status = "unhealthy"
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
@@ -135,10 +237,8 @@ func (h *MeilisearchHandler) StatsHandler(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// Get detailed stats from Meilisearch
 	stats, err := h.Module.GetStats()
 	if err != nil {
-		// Check if it's a connectivity issue
 		if !h.Module.IsHealthy() {
 			http.Error(w, "Meilisearch service is unavailable", http.StatusServiceUnavailable)
 			return
@@ -160,7 +260,6 @@ func (h *MeilisearchHandler) StatsHandler(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// getCurrentTimestamp returns the current timestamp in RFC3339 format
 func getCurrentTimestamp() string {
 	return time.Now().Format(time.RFC3339)
 }
