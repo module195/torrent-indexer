@@ -167,9 +167,17 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	if q != "" {
 		var threshold float32 = 0.05
 		if qEpisode != "" {
-			threshold = 0.25
+			// Query has episode: require either boost (0.5) or high base similarity
+			threshold = 0.45
 		}
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
+			// If query has episode, also check title contains the episode
+			if qEpisode != "" {
+				titleNorm := normalize(it.Title)
+				hasEpisode := strings.Contains(titleNorm, qEpisode)
+				// Must have episode match OR very high similarity
+				return hasEpisode && it.Similarity >= threshold || it.Similarity >= 0.48
+			}
 			return it.Similarity >= threshold
 		})
 	}
