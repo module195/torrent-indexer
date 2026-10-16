@@ -174,44 +174,9 @@ func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Re
 }
 
 // buildTorrentFilmesHDsFallbackQueries gera buscas alternativas quando a original falha.
-// Prioriza versões sem pontuação e sem indicadores de episódio/temporada.
+// Prioriza remoção de SxxEyy e não encurta abaixo de 3 palavras significativas.
 func buildTorrentFilmesHDsFallbackQueries(original string) []string {
-	var out []string
-	seen := map[string]bool{}
-
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" || s == original || seen[s] {
-			return
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-
-	// 1. Remove dois-pontos e outros separadores
-	cleaned := strings.NewReplacer(":", " ", "|", " ", "–", " ", "—", " ").Replace(original)
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
-	add(cleaned)
-
-	// 2. Remove padrões de episódio/temporada
-	noEp := regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+)\s*`).ReplaceAllString(cleaned, " ")
-	noEp = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(noEp), " ")
-	add(noEp)
-
-	// 3. Só as primeiras 2-3 palavras significativas (útil para títulos longos)
-	words := strings.Fields(noEp)
-	if len(words) > 3 {
-		add(strings.Join(words[:3], " "))
-	}
-	if len(words) > 2 {
-		add(strings.Join(words[:2], " "))
-	}
-
-	// Limita a 3 tentativas para não sobrecarregar
-	if len(out) > 3 {
-		out = out[:3]
-	}
-	return out
+	return buildSmartFallbackQueries(original)
 }
 
 func extractTorrentFilmesHDsLinks(doc *goquery.Document) []string {
