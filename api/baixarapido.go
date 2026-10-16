@@ -169,6 +169,19 @@ func buildBaixarApidoFallbackQueries(original string) []string {
 	return buildSmartFallbackQueries(original)
 }
 
+// normalizeAccents remove acentos para comparação
+func normalizeAccents(s string) string {
+	repl := strings.NewReplacer(
+		"á", "a", "à", "a", "ã", "a", "â", "a",
+		"é", "e", "ê", "e", "í", "i", "ó", "o", "ô", "o", "õ", "o",
+		"ú", "u", "ç", "c",
+		"Á", "A", "À", "A", "Ã", "A", "Â", "A",
+		"É", "E", "Ê", "E", "Í", "I", "Ó", "O", "Ô", "O", "Õ", "O",
+		"Ú", "U", "Ç", "C",
+	)
+	return repl.Replace(s)
+}
+
 // looksLikeSeries detecta se a query é de série
 func looksLikeSeries(q string) bool {
 	return regexp.MustCompile(`(?i)(S\d{1,2}|temporada|season|\d+ª)`).MatchString(q)
@@ -288,7 +301,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	doc.Find("td.text-light.fw-bold").Each(func(_ int, s *goquery.Selection) {
 		label := strings.TrimSpace(s.Text())
 		if strings.EqualFold(label, "Idioma:") {
-			lang := strings.ToLower(strings.TrimSpace(s.Next().Text()))
+			lang := normalizeAccents(strings.ToLower(strings.TrimSpace(s.Next().Text())))
 			hasPT := false
 			hasEN := false
 			for _, a := range audio {
@@ -334,12 +347,14 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			hasIngles = true
 		}
 	}
+	// Normaliza acentos para comparação
+	allTextNorm := normalizeAccents(allText)
 	// Legendado/eng = Inglês
-	if !hasIngles && (strings.Contains(allText, "legendado") || strings.Contains(allText, "eng") || strings.Contains(allText, "english")) {
+	if !hasIngles && (strings.Contains(allTextNorm, "legendado") || strings.Contains(allTextNorm, "eng") || strings.Contains(allTextNorm, "english")) {
 		audio = append(audio, "Inglês")
 	}
 	// Dublado/brazilian/pt-br/dual = Português
-	if !hasPortugues && (strings.Contains(allText, "dublado") || strings.Contains(allText, "brazilian") || strings.Contains(allText, "pt-br") || strings.Contains(allText, "portugues") || strings.Contains(allText, "dual")) {
+	if !hasPortugues && (strings.Contains(allTextNorm, "dublado") || strings.Contains(allTextNorm, "brazilian") || strings.Contains(allTextNorm, "pt-br") || strings.Contains(allTextNorm, "portugues") || strings.Contains(allTextNorm, "dual")) {
 		audio = append(audio, "Português")
 	}
 
