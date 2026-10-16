@@ -53,12 +53,14 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		decoded = strings.ReplaceAll(decoded, "+", " ")
 		
 		// Use quotes for exact match (site-specific)
+		// PathEscape já codifica as aspas. Não codifique de novo.
 		quotedQuery := `"` + decoded + `"`
-		encoded := strings.ReplaceAll(url.PathEscape(quotedQuery), "%20", "+")
+		encoded := url.PathEscape(quotedQuery)
+		encoded = strings.ReplaceAll(encoded, "%20", "+")
 		
 		targetURL = base + "/pesquisa/" + encoded + "/"
 		if page != "1" {
-			targetURL = base + fmt.Sprintf("/pesquisa/%s/page/%s/", encoded, page)
+			targetURL = base + "/pesquisa/" + encoded + "/page/" + page + "/"
 		}
 	} else {
 		targetURL = strings.TrimRight(baixarapido.URL, "/")
@@ -289,6 +291,14 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		// Limpa prefixo BAIXARAPIDO.COM e tags
 		releaseTitle = cleanBaixarApidoTitle(releaseTitle)
 
+		// Se o dn do magnet for abreviado (ex: "T l s S03E13"), prefere o h1 da página
+		if isAbbreviatedTitle(releaseTitle) && h1 != "" {
+			cleanH1 := cleanBaixarApidoTitle(h1)
+			if cleanH1 != "" && !strings.Contains(strings.ToLower(releaseTitle), strings.ToLower(cleanH1)) {
+				releaseTitle = cleanH1 + " " + releaseTitle
+			}
+		}
+
 		// Se o título limpo parece só ter info de episódio/qualidade, prepende h1
 		if needsTitlePrefix(releaseTitle) && h1 != "" {
 			cleanH1 := cleanBaixarApidoTitle(h1)
@@ -434,6 +444,20 @@ func cleanBaixarApidoTitle(raw string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// isAbbreviatedTitle detecta títulos como "T l s S03E13" (dn abreviado do magnet)
+func isAbbreviatedTitle(title string) bool {
+	words := strings.Fields(title)
+	if len(words) == 0 {
+		return true
+	}
+	first := words[0]
+	// Primeira palavra ≤ 2 letras e não é número/qualidade/season
+	if len(first) <= 2 && !regexp.MustCompile(`(?i)^(S\d|E\d|\d+P|WEB|HD|MKV|MP4)`).MatchString(first) {
+		return true
+	}
+	return false
 }
 
 // needsTitlePrefix verifica se o título parece só ter info de episódio/qualidade
