@@ -270,3 +270,42 @@ func getAudioFromTitle(releaseTitle string, audioFromContent []schema.Audio) []s
 
 	return magnetAudio
 }
+
+// buildSmartFallbackQueries gera fallbacks inteligentes.
+// Prioridade: 1) remover SxxEyy/temporada, 2) não encurtar abaixo de 3 palavras.
+func buildSmartFallbackQueries(original string) []string {
+	var out []string
+	seen := map[string]bool{}
+
+	add := func(s string) {
+		s = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(s, " "))
+		if s == "" || s == original || seen[s] || len(strings.Fields(s)) < 3 {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+
+	// 1. Remove apenas padrões de episódio/temporada
+	noEp := regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+|ep\.?\s*\d+)\s*`).ReplaceAllString(original, " ")
+	add(noEp)
+
+	// 2. Remove ano
+	noYear := regexp.MustCompile(`\b(19|20)\d{2}\b`).ReplaceAllString(noEp, "")
+	add(noYear)
+
+	// 3. Remove artigos fracos (só se sobrar ≥ 3 palavras)
+	noArticle := regexp.MustCompile(`(?i)^(the|a|o|os|as|um|uma)\s+`).ReplaceAllString(noYear, "")
+	add(noArticle)
+
+	// 4. Primeiras 4 palavras (nunca menos que 3)
+	words := strings.Fields(noArticle)
+	if len(words) > 4 {
+		add(strings.Join(words[:4], " "))
+	}
+
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
