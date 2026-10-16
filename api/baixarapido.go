@@ -85,6 +85,25 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		Str("url", targetURL).
 		Msg("Extracted links")
 
+	// Expande para páginas de temporada se for série
+	if looksLikeSeries(q) && len(links) > 0 {
+		seasonLinks := expandSeasonLinks(baixarapido.URL, links)
+		logging.Info().
+			Int("season_links", len(seasonLinks)).
+			Msg("Expanded season links")
+		links = append(links, seasonLinks...)
+		// dedupe
+		seen := map[string]bool{}
+		var unique []string
+		for _, l := range links {
+			if !seen[l] {
+				seen[l] = true
+				unique = append(unique, l)
+			}
+		}
+		links = unique
+	}
+
 	// Fallback: se não achou nada e é uma busca, tenta queries simplificadas
 	if len(links) == 0 && q != "" && page == "1" {
 		for _, altQ := range buildBaixarApidoFallbackQueries(q) {
@@ -148,6 +167,44 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 
 func buildBaixarApidoFallbackQueries(original string) []string {
 	return buildSmartFallbackQueries(original)
+}
+
+// looksLikeSeries detecta se a query é de série
+func looksLikeSeries(q string) bool {
+	return regexp.MustCompile(`(?i)(S\d{1,2}|temporada|season|\d+ª)`).MatchString(q)
+}
+
+// expandSeasonLinks gera URLs de temporada a partir dos links encontrados
+func expandSeasonLinks(baseURL string, links []string) []string {
+	slug := extractSeriesSlug(links)
+	if slug == "" {
+		return nil
+	}
+	base := strings.TrimRight(baseURL, "/")
+	var seasonLinks []string
+	variants := []string{
+		"-%d-temporada/",
+		"-%d-temporada-legendada/",
+		"-%d-temporada-dublada/",
+		"-%d-temporada-dual/",
+	}
+	for season := 1; season <= 15; season++ {
+		for _, v := range variants {
+			seasonLinks = append(seasonLinks, base+"/baixar/"+slug+fmt.Sprintf(v, season))
+		}
+	}
+	return seasonLinks
+}
+
+// extractSeriesSlug extrai o slug base da série a partir dos links
+func extractSeriesSlug(links []string) string {
+	re := regexp.MustCompile(`/baixar/([a-z0-9-]+?)(-\d+-temporada.*)?/?$`)
+	for _, link := range links {
+		if m := re.FindStringSubmatch(link); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 func extractBaixarApidoLinks(doc *goquery.Document) []string {
