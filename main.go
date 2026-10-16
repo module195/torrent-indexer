@@ -113,7 +113,7 @@ func main() {
 	indexerMux.HandleFunc("/indexers/baixarapido", indexers.HandlerBaixarApidoIndexer)
 	//indexerMux.HandleFunc("/indexers/via_filmes", indexers.HandlerViaFilmesIndexer)
 	indexerMux.HandleFunc("/indexers/comando_torrents", indexers.HandlerComandoIndexer)
-	//indexerMux.HandleFunc("/indexers/rede_torrent", indexers.HandlerRedeTorrentIndexer)
+	indexerMux.HandleFunc("/indexers/rede_torrent", indexers.HandlerRedeTorrentIndexer)
 	//indexerMux.HandleFunc("/indexers/starck-filmes", indexers.HandlerStarckFilmesIndexer)
 	indexerMux.HandleFunc("/indexers/torrent-dos-filmes", indexers.HandlerTorrentDosFilmesIndexer)
 	//indexerMux.HandleFunc("/indexers/bludv", indexers.HandlerBluDVIndexer)
