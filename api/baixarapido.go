@@ -284,6 +284,38 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	})
 	audio = append(audio, findAudioFromText(h1)...)
 
+	// Fallback: extrai Idioma da tabela de info (td.fw-bold → Idioma:)
+	if len(audio) == 0 {
+		doc.Find("td.text-light.fw-bold").Each(func(_ int, s *goquery.Selection) {
+			label := strings.TrimSpace(s.Text())
+			if strings.EqualFold(label, "Idioma:") {
+				lang := strings.ToLower(strings.TrimSpace(s.Next().Text()))
+				if strings.Contains(lang, "portugu") {
+					audio = append(audio, "Português")
+				}
+				if strings.Contains(lang, "ingl") || strings.Contains(lang, "english") {
+					audio = append(audio, "Inglês")
+				}
+				if strings.Contains(lang, "dual") {
+					audio = append(audio, "Português", "Inglês")
+				}
+			}
+		})
+	}
+
+	// Fallback: extrai Qualidade da tabela de info
+	qualidade := ""
+	doc.Find("td.text-light.fw-bold").Each(func(_ int, s *goquery.Selection) {
+		label := strings.TrimSpace(s.Text())
+		if strings.EqualFold(label, "Qualidade:") && qualidade == "" {
+			qualidade = strings.TrimSpace(s.Next().Text())
+			// Pega só a primeira (ex: "720p" de "720p\nBRRip")
+			if i := strings.IndexAny(qualidade, "\n\r"); i > 0 {
+				qualidade = strings.TrimSpace(qualidade[:i])
+			}
+		}
+	})
+
 	// Fallback: mapeia keywords manualmente
 	bodyText := doc.Text()
 	allText := strings.ToLower(h1 + " " + bodyText)
@@ -347,6 +379,11 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		}
 		// Limpa prefixo BAIXARAPIDO.COM e tags
 		releaseTitle = cleanBaixarApidoTitle(releaseTitle)
+
+		// Se o título não tem resolução e a tabela tem Qualidade, anexa
+		if qualidade != "" && !regexp.MustCompile(`(?i)\d{3,4}p`).MatchString(releaseTitle) {
+			releaseTitle = releaseTitle + " " + qualidade
+		}
 
 		// Se o dn do magnet for abreviado (ex: "T l s S03E13"), prefere o h1 da página
 		if isAbbreviatedTitle(releaseTitle) && h1 != "" {
