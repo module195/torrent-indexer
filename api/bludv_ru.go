@@ -65,6 +65,32 @@ func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	links := extractBludvRuLinks(doc)
+
+	// Fallback inteligente
+	if len(links) == 0 && q != "" && page == "1" {
+		for _, altQ := range buildSmartFallbackQueries(q) {
+			altURL := bludvRu.URL + bludvRu.SearchURL + url.QueryEscape(altQ)
+			logging.Info().
+				Str("original_q", q).
+				Str("fallback_q", altQ).
+				Str("url", altURL).
+				Msg("Trying fallback search")
+
+			altDoc, err := getDocument(ctx, i, altURL, bludvRu.URL)
+			if err != nil {
+				continue
+			}
+			links = extractBludvRuLinks(altDoc)
+			if len(links) > 0 {
+				logging.Info().
+					Str("fallback_q", altQ).
+					Int("links", len(links)).
+					Msg("Fallback search found results")
+				break
+			}
+		}
+	}
+
 	if len(links) == 0 {
 		logging.Info().Str("url", targetURL).Msg("No links found")
 		_ = json.NewEncoder(w).Encode(Response{
