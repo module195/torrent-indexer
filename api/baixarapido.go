@@ -284,24 +284,29 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	})
 	audio = append(audio, findAudioFromText(h1)...)
 
-	// Fallback: extrai Idioma da tabela de info (td.fw-bold → Idioma:)
-	if len(audio) == 0 {
-		doc.Find("td.text-light.fw-bold").Each(func(_ int, s *goquery.Selection) {
-			label := strings.TrimSpace(s.Text())
-			if strings.EqualFold(label, "Idioma:") {
-				lang := strings.ToLower(strings.TrimSpace(s.Next().Text()))
-				if strings.Contains(lang, "portugu") {
-					audio = append(audio, "Português")
-				}
-				if strings.Contains(lang, "ingl") || strings.Contains(lang, "english") {
-					audio = append(audio, "Inglês")
-				}
-				if strings.Contains(lang, "dual") {
-					audio = append(audio, "Português", "Inglês")
-				}
+	// Sempre extrai Idioma da tabela de info e mescla
+	doc.Find("td.text-light.fw-bold").Each(func(_ int, s *goquery.Selection) {
+		label := strings.TrimSpace(s.Text())
+		if strings.EqualFold(label, "Idioma:") {
+			lang := strings.ToLower(strings.TrimSpace(s.Next().Text()))
+			hasPT := false
+			hasEN := false
+			for _, a := range audio {
+				if a == "Português" { hasPT = true }
+				if a == "Inglês" { hasEN = true }
 			}
-		})
-	}
+			if !hasPT && strings.Contains(lang, "portugu") {
+				audio = append(audio, "Português")
+			}
+			if !hasEN && (strings.Contains(lang, "ingl") || strings.Contains(lang, "english")) {
+				audio = append(audio, "Inglês")
+			}
+			if strings.Contains(lang, "dual") {
+				if !hasPT { audio = append(audio, "Português") }
+				if !hasEN { audio = append(audio, "Inglês") }
+			}
+		}
+	})
 
 	// Fallback: extrai Qualidade da tabela de info
 	qualidade := ""
