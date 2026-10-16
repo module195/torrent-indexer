@@ -145,19 +145,7 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 }
 
 func buildBaixarApidoFallbackQueries(original string) []string {
-	var queries []string
-	// Remove ano
-	noYear := regexp.MustCompile(`\b(19|20)\d{2}\b`).ReplaceAllString(original, "")
-	noYear = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(noYear, " "))
-	if noYear != "" && noYear != original {
-		queries = append(queries, noYear)
-	}
-	// Primeiras 3 palavras
-	words := strings.Fields(original)
-	if len(words) > 3 {
-		queries = append(queries, strings.Join(words[:3], " "))
-	}
-	return queries
+	return buildSmartFallbackQueries(original)
 }
 
 func extractBaixarApidoLinks(doc *goquery.Document) []string {
