@@ -138,7 +138,7 @@ func getSeparator(s string) string {
 func findAudioFromText(text string) []schema.Audio {
 	var audio []schema.Audio
 	// Regex mais específico - captura apenas até o próximo campo ou fim
-	re := regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|$))`)
+	re := regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|legenda|$))`)
 	audioMatch := re.FindStringSubmatch(text)
 	if len(audioMatch) > 1 {
 		sep := getSeparator(audioMatch[1])
