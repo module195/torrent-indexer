@@ -234,33 +234,52 @@ func appendAudioISO639_2Code(title string, a []schema.Audio) string {
 	return title
 }
 
-// getAudioFromTitle extracts audio languages from the release title.
-// It checks for common patterns like "nacional", "dual", or "dublado"
-func getAudioFromTitle(releaseTitle string, audioFromContent []schema.Audio) []schema.Audio {
-	magnetAudio := []schema.Audio{}
-	isNacional := strings.Contains(strings.ToLower(releaseTitle), "nacional")
-	if isNacional {
-		magnetAudio = append(magnetAudio, schema.AudioPortuguese)
+// normalizeForMatch normaliza texto para comparação (lowercase + remove acentos).
+func normalizeForMatch(s string) string {
+	s = strings.ToLower(s)
+	replacements := map[string]string{
+		"á": "a", "à": "a", "ã": "a", "â": "a",
+		"é": "e", "ê": "e",
+		"í": "i",
+		"ó": "o", "õ": "o", "ô": "o",
+		"ú": "u", "ü": "u",
+		"ç": "c",
 	}
+	for from, to := range replacements {
+		s = strings.ReplaceAll(s, from, to)
+	}
+	return s
+}
 
-	if strings.Contains(strings.ToLower(releaseTitle), "dual") || strings.Contains(strings.ToLower(releaseTitle), "dublado") {
-		magnetAudio = append(magnetAudio, audioFromContent...)
-		// if Portuguese audio is not in the audio slice, append it
+// getAudioFromTitle extracts audio languages from the release title.
+// Mantém o áudio do conteúdo e complementa com hints do título.
+// Não remove Português quando há múltiplos idiomas.
+func getAudioFromTitle(releaseTitle string, audioFromContent []schema.Audio) []schema.Audio {
+	titleNorm := normalizeForMatch(releaseTitle)
+	magnetAudio := append([]schema.Audio{}, audioFromContent...)
+
+	// Título com "nacional" → força Português
+	if strings.Contains(titleNorm, "nacional") {
 		if !slices.Contains(magnetAudio, schema.AudioPortuguese) {
 			magnetAudio = append(magnetAudio, schema.AudioPortuguese)
 		}
-	} else if len(audioFromContent) > 1 {
-		// remove portuguese audio, and append to magnetAudio
-		for _, a := range audioFromContent {
-			if a != schema.AudioPortuguese {
-				magnetAudio = append(magnetAudio, a)
-			}
-		}
-	} else {
-		magnetAudio = append(magnetAudio, audioFromContent...)
 	}
 
-	// order and uniq the audio slice
+	// Título com "dual" ou "dublado" → força Português se ainda não tiver
+	if strings.Contains(titleNorm, "dual") || strings.Contains(titleNorm, "dublado") {
+		if !slices.Contains(magnetAudio, schema.AudioPortuguese) {
+			magnetAudio = append(magnetAudio, schema.AudioPortuguese)
+		}
+	}
+
+	// Título com "legendado" → adiciona Inglês se ainda não tiver
+	if strings.Contains(titleNorm, "legendado") || strings.Contains(titleNorm, "legenda") {
+		if !slices.Contains(magnetAudio, schema.AudioEnglish) {
+			magnetAudio = append(magnetAudio, schema.AudioEnglish)
+		}
+	}
+
+	// Dedup e ordena
 	slices.SortFunc(magnetAudio, func(a, b schema.Audio) int {
 		return strings.Compare(a.String(), b.String())
 	})
