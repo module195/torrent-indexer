@@ -150,15 +150,15 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 
 	// Clean known site prefixes from the release title (matches CleanupTitleWebsites behavior)
 	releaseTitle = cleanBetorTitle(releaseTitle)
+
+	// Extract audio BEFORE cleaning title (cleanBetorTitle removes DUAL/DUBLADO/LEGENDADO)
+	audio := parseBetorLanguages(languages)
+	audio = getAudioFromTitle(torrentName, audio)
+
 	torrentName = cleanBetorTitle(torrentName)
 
 	// Year extraction: try multiple sources
-	// 1. torrent name, 2. provider URL, 3. file names
 	year := extractBetorYear(torrentName, providerURL, item)
-
-	// Languages: prefer catalog attribute, always complement with title hints
-	audio := parseBetorLanguages(languages)
-	audio = getAudioFromTitle(torrentName, audio)
 
 	// IMDb
 	imdbLink := ""
