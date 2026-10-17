@@ -56,7 +56,7 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	query = normalizeQuery(query)
 
 	limitStr := r.URL.Query().Get("limit")
-	limit := 100
+	limit := 200
 	if limitStr != "" {
 		var err error
 		limit, err = strconv.Atoi(limitStr)
