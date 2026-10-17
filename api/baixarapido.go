@@ -465,7 +465,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		}
 // Ignora magnets que são só de legenda
 titleLowerCheck := strings.ToLower(releaseTitle + " " + titleProcessed)
-if strings.Contains(titleLowerCheck, "legendado") ||
+if strings.Contains(titleLowerCheck, "LEGENDADO") ||
    strings.Contains(titleLowerCheck, "legenda") ||
    strings.Contains(titleLowerCheck, "legendas") ||
    strings.Contains(titleLowerCheck, "subtitle") ||
