@@ -156,8 +156,9 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 	// 1. torrent name, 2. provider URL, 3. file names
 	year := extractBetorYear(torrentName, providerURL, item)
 
-	// Languages
+	// Languages: prefer catalog attribute, always complement with title hints
 	audio := parseBetorLanguages(languages)
+	audio = getAudioFromTitle(torrentName, audio)
 
 	// IMDb
 	imdbLink := ""
