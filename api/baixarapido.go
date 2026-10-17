@@ -463,7 +463,15 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 			seed = s
 			leech = peer
 		}
-
+// Ignora magnets que são só de legenda
+titleLowerCheck := strings.ToLower(releaseTitle + " " + titleProcessed)
+if strings.Contains(titleLowerCheck, "legendado") ||
+   strings.Contains(titleLowerCheck, "legenda") ||
+   strings.Contains(titleLowerCheck, "legendas") ||
+   strings.Contains(titleLowerCheck, "subtitle") ||
+   strings.Contains(titleLowerCheck, ".srt") {
+    continue
+}
 		results = append(results, schema.IndexedTorrent{
 			Title:         releaseTitle,
 			OriginalTitle: titleProcessed,
