@@ -121,8 +121,8 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 	seedsStr, _ := item.Attr("data-torrent-num-seeds")
 	peersStr, _ := item.Attr("data-torrent-num-peers")
 	imdbID, _ := item.Attr("data-item-imdb-id")
-	tmdbID, _ := item.Attr("data-item-tmdb-id")
-	itemType, _ := item.Attr("data-item-type")
+	_, _ = item.Attr("data-item-tmdb-id")     // available if needed later
+	_, _ = item.Attr("data-item-type")        // "movie" or "tv"
 	providerURL, _ := item.Attr("data-provider-url")
 	insertedAt, _ := item.Attr("data-torrent-inserted-at")
 
