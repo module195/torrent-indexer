@@ -283,7 +283,118 @@ func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) 
 
 	return ""
 }
-// cleanBetorTitle cleans titles using the same structure as cleanBaixarApidoTitle.
+// DedupByInfoHash removes duplicate torrents by info_hash, merging metadata.
+// Keeps the entry with the highest seed count and fills empty fields from others.
+// Follows the GuIndex approach of using info_hash as the canonical key.
+func DedupByInfoHash(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	type entry struct {
+		torrent schema.IndexedTorrent
+		idx     int
+	}
+	best := map[string]*entry{}
+	var order []string
+
+	for i, t := range torrents {
+		key := strings.ToLower(strings.TrimSpace(t.InfoHash))
+		if key == "" {
+			// No info_hash: keep as-is with unique key
+			key = fmt.Sprintf("__nohash_%d", i)
+		}
+		if existing, ok := best[key]; ok {
+			existing.torrent = mergeTorrent(existing.torrent, t)
+		} else {
+			best[key] = &entry{torrent: t, idx: i}
+			order = append(order, key)
+		}
+	}
+
+	out := make([]schema.IndexedTorrent, 0, len(order))
+	for _, key := range order {
+		out = append(out, best[key].torrent)
+	}
+	return out
+}
+
+// mergeTorrent combines two torrents with the same info_hash.
+// Prefers higher seed/leech counts and fills empty fields.
+func mergeTorrent(a, b schema.IndexedTorrent) schema.IndexedTorrent {
+	out := a
+
+	// Prefer higher seed/leech
+	if b.SeedCount > out.SeedCount {
+		out.SeedCount = b.SeedCount
+	}
+	if b.LeechCount > out.LeechCount {
+		out.LeechCount = b.LeechCount
+	}
+
+	// Fill empty string fields
+	if out.Title == "" && b.Title != "" {
+		out.Title = b.Title
+	}
+	if out.OriginalTitle == "" && b.OriginalTitle != "" {
+		out.OriginalTitle = b.OriginalTitle
+	}
+	if out.Size == "" && b.Size != "" {
+		out.Size = b.Size
+	}
+	if out.Year == "" && b.Year != "" {
+		out.Year = b.Year
+	}
+	if out.Date == "" && b.Date != "" {
+		out.Date = b.Date
+	}
+	if out.IMDB == "" && b.IMDB != "" {
+		out.IMDB = b.IMDB
+	}
+	if out.Details == "" && b.Details != "" {
+		out.Details = b.Details
+	}
+
+	// Union of audio tags
+	out.Audio = unionAudio(out.Audio, b.Audio)
+
+	// Union of trackers
+	out.Trackers = unionStrings(out.Trackers, b.Trackers)
+
+	return out
+}
+
+func unionAudio(a, b []schema.Audio) []schema.Audio {
+	seen := map[schema.Audio]bool{}
+	var out []schema.Audio
+	for _, x := range a {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, x := range b {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func unionStrings(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range a {
+		if x != "" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, x := range b {
+		if x != "" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
 // Removes site prefixes, residual .EPISODIO-XX patterns, quality tags, and normalizes separators.
 func cleanBetorTitle(raw string) string {
 	if raw == "" {
