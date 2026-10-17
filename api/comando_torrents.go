@@ -277,7 +277,7 @@ func parseLocalizedDate(datePublished string) (time.Time, error) {
 	return time.Time{}, nil
 }
 
-f
+func processTitle(title string, a []schema.Audio) string {
 	// remove ' - Donwload' from title
 	title = strings.Replace(title, " – Download", "", -1)
 
