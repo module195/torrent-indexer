@@ -152,13 +152,9 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 	releaseTitle = cleanBetorTitle(releaseTitle)
 	torrentName = cleanBetorTitle(torrentName)
 
-	// Year extraction: try data attribute first, then findYearFromText pattern, then regex
-	year := ""
-	if y := findYearFromText(torrentName, torrentName); y != "" {
-		year = y
-	} else if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindString(torrentName); m != "" {
-		year = m
-	}
+	// Year extraction: try multiple sources
+	// 1. torrent name, 2. provider URL, 3. file names
+	year := extractBetorYear(torrentName, providerURL, item)
 
 	// Languages
 	audio := parseBetorLanguages(languages)
@@ -254,8 +250,32 @@ func formatBetorSize(bytes int64) string {
 	return fmt.Sprintf("%.0f MB", float64(bytes)/float64(mb))
 }
 
-// cleanBetorTitle removes common Brazilian torrent site prefixes that appear in titles.
-// Complements the global CleanupTitleWebsites post-processor.
+// extractBetorYear looks for a 4-digit year in multiple sources:
+// torrent name, provider URL, and data-torrent-files filenames.
+func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) string {
+	yearRe := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+
+	// 1. torrent name
+	if y := yearRe.FindString(torrentName); y != "" {
+		return y
+	}
+
+	// 2. provider URL (often contains year like "...-2026-dual...")
+	if y := yearRe.FindString(providerURL); y != "" {
+		return y
+	}
+
+	// 3. file names from data-torrent-files
+	if files, ok := item.Attr("data-torrent-files"); ok && files != "" {
+		for _, f := range strings.Split(files, ";") {
+			if y := yearRe.FindString(f); y != "" {
+				return y
+			}
+		}
+	}
+
+	return ""
+}
 func cleanBetorTitle(title string) string {
 	if title == "" {
 		return title
