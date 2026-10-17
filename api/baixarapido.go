@@ -532,8 +532,8 @@ func cleanBaixarApidoTitle(raw string) string {
 	s = regexp.MustCompile(`(?i)^\[UNSAFE\]\s*`).ReplaceAllString(s, "")
 
 	// Remove "EPISODIO XX" no início
-	s = regexp.MustCompile(`(?i)^EPISODIO\s+\d+\s+`).ReplaceAllString(s, "")
-
+    s = regexp.MustCompile(`(?i)^[\s.-]*EPISODIO[\s.-]*\d+[\s.-]*`).ReplaceAllString(s, "")
+	
 	// Remove tipo arquivo no início
 	s = regexp.MustCompile(`(?i)^(MP4|MKV|AVI)\s+`).ReplaceAllString(s, "")
 
