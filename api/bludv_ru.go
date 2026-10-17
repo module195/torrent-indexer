@@ -156,7 +156,7 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.
 	}
 
 	year := ""
-	if m := regexp.MustCompile(`(\d{4})`).FindStringSubmatch(title); len(m) > 0 {
+	if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindStringSubmatch(title); len(m) > 0 {
 		year = m[1]
 	}
 
