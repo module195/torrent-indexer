@@ -204,7 +204,7 @@ func getTorrents(ctx context.Context, i *Indexer, link, referer string) ([]schem
 				chanIndexedTorrent <- schema.IndexedTorrent{}
 				return
 			}
-			releaseTitle := magnet.DisplayName
+			releaseTitle := cleanComandoTitle(magnet.DisplayName)
 			infoHash := magnet.InfoHash.String()
 			trackers := magnet.Trackers
 			magnetAudio := getAudioFromTitle(releaseTitle, audio)
@@ -277,7 +277,7 @@ func parseLocalizedDate(datePublished string) (time.Time, error) {
 	return time.Time{}, nil
 }
 
-func processTitle(title string, a []schema.Audio) string {
+f
 	// remove ' - Donwload' from title
 	title = strings.Replace(title, " – Download", "", -1)
 
@@ -288,4 +288,12 @@ func processTitle(title string, a []schema.Audio) string {
 	title = appendAudioISO639_2Code(title, a)
 
 	return title
+}
+func cleanComandoTitle(raw string) string {
+	s := raw
+	// Remove site prefix
+	s = regexp.MustCompile(`(?i)^comando\d*\.com\s*[-.]?\s*`).ReplaceAllString(s, "")
+	// Remove " - Download" suffix
+	s = regexp.MustCompile(`(?i)\s*[-–]\s*download$`).ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
 }
