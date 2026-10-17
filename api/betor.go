@@ -148,9 +148,15 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 		releaseTitle = torrentName
 	}
 
-	// Year from torrent name
+	// Clean known site prefixes from the release title (matches CleanupTitleWebsites behavior)
+	releaseTitle = cleanBetorTitle(releaseTitle)
+	torrentName = cleanBetorTitle(torrentName)
+
+	// Year extraction: try data attribute first, then findYearFromText pattern, then regex
 	year := ""
-	if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindString(torrentName); m != "" {
+	if y := findYearFromText(torrentName, torrentName); y != "" {
+		year = y
+	} else if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindString(torrentName); m != "" {
 		year = m
 	}
 
@@ -246,4 +252,29 @@ func formatBetorSize(bytes int64) string {
 		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(gb))
 	}
 	return fmt.Sprintf("%.0f MB", float64(bytes)/float64(mb))
+}
+
+// cleanBetorTitle removes common Brazilian torrent site prefixes that appear in titles.
+// Complements the global CleanupTitleWebsites post-processor.
+func cleanBetorTitle(title string) string {
+	if title == "" {
+		return title
+	}
+	// Remove common site prefixes (case-insensitive)
+	prefixes := []string{
+		`(?i)^BAIXARAPIDO\.COM[-.]`,
+		`(?i)^COMANDO1\.COM[-.]`,
+		`(?i)^BLUDV[-.]`,
+		`(?i)^STARCKFILMES[-.]`,
+		`(?i)^REDETORRENT[-.]`,
+		`(?i)^TORRENTDOSFILMES[-.]`,
+		`(?i)^WWW\.[A-Z0-9.-]+\.[A-Z]{2,}[-.]`,
+		`(?i)^\[(?:EVITE|BAIXE|DOWNLOAD|WWW)[^\]]*\]\s*`,
+	}
+	for _, p := range prefixes {
+		title = regexp.MustCompile(p).ReplaceAllString(title, "")
+	}
+	// Collapse multiple dots/spaces
+	title = regexp.MustCompile(`[.\s]{2,}`).ReplaceAllString(title, " ")
+	return strings.TrimSpace(title)
 }
