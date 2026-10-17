@@ -342,7 +342,7 @@ func mergeTorrent(a, b schema.IndexedTorrent) schema.IndexedTorrent {
 	if out.Year == "" && b.Year != "" {
 		out.Year = b.Year
 	}
-	if out.Date == "" && b.Date != "" {
+	if out.Date.IsZero() && !b.Date.IsZero() {
 		out.Date = b.Date
 	}
 	if out.IMDB == "" && b.IMDB != "" {
