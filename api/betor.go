@@ -251,7 +251,7 @@ func formatBetorSize(bytes int64) string {
 }
 
 // extractBetorYear looks for a 4-digit year in multiple sources:
-// torrent name, provider URL, and data-torrent-files filenames.
+// 1. torrent name, 2. provider URL, 3. file names, 4. inserted date (fallback).
 func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) string {
 	yearRe := regexp.MustCompile(`\b(19|20)\d{2}\b`)
 
@@ -274,27 +274,90 @@ func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) 
 		}
 	}
 
+	// 4. Fallback: year from data-torrent-inserted-at (indexing date)
+	if inserted, ok := item.Attr("data-torrent-inserted-at"); ok && inserted != "" {
+		if y := yearRe.FindString(inserted); y != "" {
+			return y
+		}
+	}
+
 	return ""
 }
-func cleanBetorTitle(title string) string {
-	if title == "" {
-		return title
+// cleanBetorTitle cleans titles using the same structure as cleanBaixarApidoTitle.
+// Removes site prefixes, residual .EPISODIO-XX patterns, quality tags, and normalizes separators.
+func cleanBetorTitle(raw string) string {
+	if raw == "" {
+		return ""
 	}
-	// Remove common site prefixes (case-insensitive)
-	prefixes := []string{
-		`(?i)^BAIXARAPIDO\.COM[-.]`,
-		`(?i)^COMANDO1\.COM[-.]`,
-		`(?i)^BLUDV[-.]`,
-		`(?i)^STARCKFILMES[-.]`,
-		`(?i)^REDETORRENT[-.]`,
-		`(?i)^TORRENTDOSFILMES[-.]`,
-		`(?i)^WWW\.[A-Z0-9.-]+\.[A-Z]{2,}[-.]`,
-		`(?i)^\[(?:EVITE|BAIXE|DOWNLOAD|WWW)[^\]]*\]\s*`,
+	s := raw
+
+	// Remove file extensions
+	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
+
+	// Normalize separators
+	s = strings.ReplaceAll(s, ".", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "+", " ")
+
+	// Remove residual .EPISODIO-XX or EPISODIO XX patterns at start (Betor specific)
+	s = regexp.MustCompile(`(?i)^[\s.-]*EPISODIO[\s.-]*\d+[\s.-]*`).ReplaceAllString(s, "")
+
+	// Remove known site prefixes (case-insensitive)
+	sitePrefixes := []string{
+		"BAIXARAPIDO COM", "SITEDETORRENTS COM", "HIDRATORRENTS ORG",
+		"VAMOSTORRENT COM", "TORRENTFILMESHDS", "BLUDV",
+		"VEMTORRENT COM", "COMOEUBAIXO COM", "VACATORRENT COM",
+		"HIDRATORRENT COM", "STARCKFILMES", "TDF",
+		"COMANDO TORRENTS", "COMANDO1", "REDE TORRENT",
+		"VACA TORRENT", "VIA FILMES", "BAIXANDO TORRENTS",
+		"SEM TORRENT", "REDESTORRENTS",
 	}
-	for _, p := range prefixes {
-		title = regexp.MustCompile(p).ReplaceAllString(title, "")
+	for _, prefix := range sitePrefixes {
+		s = regexp.MustCompile(`(?i)^` + regexp.QuoteMeta(prefix) + `\s*[-.]?\s*`).ReplaceAllString(s, "")
 	}
-	// Collapse multiple dots/spaces
-	title = regexp.MustCompile(`[.\s]{2,}`).ReplaceAllString(title, " ")
-	return strings.TrimSpace(title)
+
+	// Generic pattern: remove any "*TORRENT COM" or "*TORRENTS COM" at start
+	s = regexp.MustCompile(`(?i)^[A-Z]+TORRENTS?\s+COM\s*[-.]?\s*`).ReplaceAllString(s, "")
+
+	// Remove [UNSAFE]
+	s = regexp.MustCompile(`(?i)^\[UNSAFE\]\s*`).ReplaceAllString(s, "")
+
+	// Remove file type at start
+	s = regexp.MustCompile(`(?i)^(MP4|MKV|AVI)\s+`).ReplaceAllString(s, "")
+
+	// Remove audio/encoding type at start
+	s = regexp.MustCompile(`(?i)^(LEGENDADO|DUBLADO|DUAL-AUDIO|DUAL)\s+`).ReplaceAllString(s, "")
+
+	// Remove quality tags at start (loop to handle nested cases)
+	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|MKV|MP4|X264|X265|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO)\s*[-.\s]*`
+	for i := 0; i < 5; i++ {
+		prev := s
+		s = regexp.MustCompile(qualityPrefix).ReplaceAllString(s, "")
+		if s == prev {
+			break
+		}
+	}
+
+	// Preserve known hyphenated tags
+	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "DUAL-AUDIO", "CAM-RIP"}
+	placeholders := map[string]string{}
+	for i, tag := range knownHyphen {
+		ph := fmt.Sprintf("⟦%d⟧", i)
+		if strings.Contains(strings.ToUpper(s), tag) {
+			s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(tag)).ReplaceAllString(s, ph)
+			placeholders[ph] = tag
+		}
+	}
+
+	// Normalize spaces and hyphens
+	s = strings.ReplaceAll(s, "-", " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	// Restore preserved tags
+	for ph, tag := range placeholders {
+		s = strings.ReplaceAll(s, ph, tag)
+	}
+
+	return strings.TrimSpace(s)
 }
