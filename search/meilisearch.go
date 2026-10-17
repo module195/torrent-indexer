@@ -120,8 +120,8 @@ func (t *SearchIndexer) IndexTorrents(torrents []schema.IndexedTorrent) error {
 // SearchTorrent searches indexed torrents in Meilisearch based on the query.
 func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.IndexedTorrent, error) {
 	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
-	if limit > 100 {
-		limit = 100
+	if limit > 200 {
+		limit = 200
 	}
 	requestBody := map[string]interface{}{
 		"q":     query,
