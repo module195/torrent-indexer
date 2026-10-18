@@ -125,12 +125,29 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Extract expected title from page <title> for relevance filtering
+	// Example: "Homem-Aranha: Um Novo Dia - Catálogo BeTor" → "Homem-Aranha: Um Novo Dia"
+	pageTitle := strings.TrimSpace(doc.Find("title").First().Text())
+	expectedTitle := pageTitle
+	if idx := strings.Index(pageTitle, " - "); idx > 0 {
+		expectedTitle = strings.TrimSpace(pageTitle[:idx])
+	}
+	expectedNorm := normalizeForMatch(expectedTitle)
+
 	var indexedTorrents []schema.IndexedTorrent
 	for _, item := range items {
 		ixt, err := parseBetorItem(ctx, i, item)
 		if err != nil || ixt.InfoHash == "" {
 			continue
 		}
+
+		// Relevance filter: discard results that don't reasonably match the page title
+		// This removes polluted entries (Supergirl, O Diabo Veste Prada 2, etc.)
+		// that the catalog incorrectly associates with this IMDb ID.
+		if expectedNorm != "" && !isRelevantToTitle(ixt.Title, expectedNorm) && !isRelevantToTitle(ixt.OriginalTitle, expectedNorm) {
+			continue
+		}
+
 		indexedTorrents = append(indexedTorrents, ixt)
 	}
 
@@ -183,18 +200,22 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 	}
 
 	infoHash := mag.InfoHash.String()
-	releaseTitle := mag.DisplayName
-	if releaseTitle == "" {
-		releaseTitle = torrentName
-	}
 
-	// Clean known site prefixes from the release title (matches CleanupTitleWebsites behavior)
-	releaseTitle = cleanBetorTitle(releaseTitle)
+	// Prefer the clean data-torrent-name from the catalog over the dirty magnet dn=
+	// The catalog name is already well-formed; magnet DisplayName usually has site prefixes and junk.
+	var releaseTitle string
+	if torrentName != "" {
+		releaseTitle = torrentName
+	} else {
+		releaseTitle = mag.DisplayName
+	}
 
 	// Extract audio BEFORE cleaning title (cleanBetorTitle removes DUAL/DUBLADO/LEGENDADO)
 	audio := parseBetorLanguages(languages)
 	audio = getAudioFromTitle(torrentName, audio)
 
+	// Light cleaning only (keep quality tags that are useful)
+	releaseTitle = cleanBetorTitle(releaseTitle)
 	torrentName = cleanBetorTitle(torrentName)
 
 	// Year extraction: try multiple sources
@@ -514,4 +535,70 @@ func cleanBetorTitle(raw string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// normalizeForMatch lowercases, removes accents roughly, and strips non-alphanumeric.
+func normalizeForMatch(s string) string {
+	s = strings.ToLower(s)
+	// basic accent strip (enough for PT-BR titles)
+	replacer := strings.NewReplacer(
+		"á", "a", "à", "a", "ã", "a", "â", "a",
+		"é", "e", "ê", "e",
+		"í", "i",
+		"ó", "o", "ô", "o", "õ", "o",
+		"ú", "u", "ü", "u",
+		"ç", "c",
+	)
+	s = replacer.Replace(s)
+	// keep only letters, numbers and spaces
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == ' ' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// isRelevantToTitle returns true if the torrent title shares significant keywords with the expected title.
+// Requires at least 2 matching significant words (length >= 3), or 1 if the expected title is short.
+func isRelevantToTitle(torrentTitle, expectedNorm string) bool {
+	if expectedNorm == "" || torrentTitle == "" {
+		return true // don't filter when we have nothing to compare
+	}
+	torrentNorm := normalizeForMatch(torrentTitle)
+	expectedWords := significantWords(expectedNorm)
+	if len(expectedWords) == 0 {
+		return true
+	}
+	torrentWords := map[string]bool{}
+	for _, w := range strings.Fields(torrentNorm) {
+		if len(w) >= 3 {
+			torrentWords[w] = true
+		}
+	}
+	matches := 0
+	for _, w := range expectedWords {
+		if torrentWords[w] {
+			matches++
+		}
+	}
+	threshold := 2
+	if len(expectedWords) < 2 {
+		threshold = 1
+	}
+	return matches >= threshold
+}
+
+func significantWords(s string) []string {
+	var out []string
+	stop := map[string]bool{"the": true, "a": true, "an": true, "of": true, "and": true, "um": true, "uma": true, "de": true, "do": true, "da": true, "dos": true, "das": true, "o": true, "os": true, "as": true}
+	for _, w := range strings.Fields(s) {
+		if len(w) >= 3 && !stop[w] {
+			out = append(out, w)
+		}
+	}
+	return out
 }
