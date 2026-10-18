@@ -29,6 +29,12 @@ var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
 // queries to avoid unnecessary FlareSolverr requests.
 func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Libera o indexer betor (ele suporta IMDb)
+		if strings.HasPrefix(r.URL.Path, "/indexers/betor") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		q := r.URL.Query().Get("q")
 		if imdbQueryRE.MatchString(q) {
 			w.Header().Set("Content-Type", "application/json")
@@ -41,7 +47,6 @@ func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
 func main() {
 	// Initialize logging first
 	logging.InitLogger()
