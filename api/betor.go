@@ -74,17 +74,28 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 
 
-	// Bloqueia buscas por texto — só permite IMDB ID
 	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
-	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Response{
-			Results:      []schema.IndexedTorrent{},
-			Count:        0,
-			IndexedCount: 0,
-		})
-		return
-	}
+isIMDb := imdbPattern.MatchString(strings.ToLower(q))
+
+if q != "" && !isIMDb {
+    // bloqueia texto (mantém o comportamento atual)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(Response{Results: []schema.IndexedTorrent{}, Count: 0})
+    return
+}
+
+// Monta a URL
+if isIMDb {
+    // Usa a página dedicada (mais precisa e estável)
+    targetURL = base + "/imdb/" + strings.ToLower(q) + "/"
+} else if q != "" {
+    // lógica atual de /search/?q= ...
+    targetURL = base + "/search/?q=" + url.QueryEscape(searchQuery)
+} else if page != "" && page != "1" {
+    targetURL = base + "/filmes-e-series/page/" + page + "/"
+} else {
+    targetURL = base + "/filmes-e-series/"
+}
 
 	logging.InfoWithRequest(r).
 		Str("target_url", targetURL).
