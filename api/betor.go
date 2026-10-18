@@ -34,16 +34,33 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		i.metrics.IndexerRequests.WithLabelValues(metadata.Label).Inc()
 	}()
 
-		ctx := r.Context()
+	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	page := r.URL.Query().Get("page")
 
 	var targetURL string
 	base := strings.TrimRight(metadata.URL, "/")
-	exactMatch := false
 
-	if q != "" {
-		// Decode first (mesmo padrão do baixarapido)
+	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
+	isIMDb := imdbPattern.MatchString(strings.ToLower(q))
+
+	// Bloqueia buscas por texto — só permite IMDB ID
+	if q != "" && !isIMDb {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{
+			Results:      []schema.IndexedTorrent{},
+			Count:        0,
+			IndexedCount: 0,
+		})
+		return
+	}
+
+	// Monta a URL
+	if isIMDb {
+		// Página dedicada por IMDb (mais estável e precisa)
+		targetURL = base + "/imdb/" + strings.ToLower(q) + "/"
+	} else if q != "" {
+		// Busca normal (caso no futuro queira permitir texto)
 		decoded, err := url.QueryUnescape(q)
 		if err != nil {
 			decoded = q
@@ -51,14 +68,12 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		decoded = strings.ReplaceAll(decoded, "+", " ")
 		decoded = strings.TrimSpace(decoded)
 
-		// Remove aspas existentes para evitar ""query""
+		exactMatch := false
 		if strings.HasPrefix(decoded, `"`) && strings.HasSuffix(decoded, `"`) && len(decoded) > 1 {
 			decoded = strings.Trim(decoded, `"`)
 			exactMatch = true
 		}
 
-		// Exact match: envolve em aspas (estilo baixarapido)
-		// Se não for exact, manda sem aspas (site do betor zera muitos resultados com aspas)
 		var searchQuery string
 		if exactMatch {
 			searchQuery = `"` + decoded + `"`
@@ -72,30 +87,6 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	} else {
 		targetURL = base + "/filmes-e-series/"
 	}
-
-
-	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
-isIMDb := imdbPattern.MatchString(strings.ToLower(q))
-
-if q != "" && !isIMDb {
-    // bloqueia texto (mantém o comportamento atual)
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(Response{Results: []schema.IndexedTorrent{}, Count: 0})
-    return
-}
-
-// Monta a URL
-if isIMDb {
-    // Usa a página dedicada (mais precisa e estável)
-    targetURL = base + "/imdb/" + strings.ToLower(q) + "/"
-} else if q != "" {
-    // lógica atual de /search/?q= ...
-    targetURL = base + "/search/?q=" + url.QueryEscape(searchQuery)
-} else if page != "" && page != "1" {
-    targetURL = base + "/filmes-e-series/page/" + page + "/"
-} else {
-    targetURL = base + "/filmes-e-series/"
-}
 
 	logging.InfoWithRequest(r).
 		Str("target_url", targetURL).
@@ -134,7 +125,7 @@ if isIMDb {
 		})
 	}
 
-		var indexedTorrents []schema.IndexedTorrent
+	var indexedTorrents []schema.IndexedTorrent
 	for _, item := range items {
 		ixt, err := parseBetorItem(ctx, i, item)
 		if err != nil || ixt.InfoHash == "" {
@@ -142,9 +133,6 @@ if isIMDb {
 		}
 		indexedTorrents = append(indexedTorrents, ixt)
 	}
-
-
-
 
 	// Apply post-processors
 	for _, processor := range i.postProcessors {
@@ -336,6 +324,7 @@ func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) 
 
 	return ""
 }
+
 // DedupByInfoHash removes duplicate torrents by info_hash, merging metadata.
 // Keeps the entry with the highest seed count and fills empty fields from others.
 // Follows the GuIndex approach of using info_hash as the canonical key.
@@ -448,6 +437,7 @@ func unionStrings(a, b []string) []string {
 	}
 	return out
 }
+
 // Removes site prefixes, residual .EPISODIO-XX patterns, quality tags, and normalizes separators.
 func cleanBetorTitle(raw string) string {
 	if raw == "" {
