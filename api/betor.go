@@ -73,6 +73,19 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		targetURL = base + "/filmes-e-series/"
 	}
 
+
+	// Bloqueia buscas por texto — só permite IMDB ID
+	imdbPattern := regexp.MustCompile(`^tt\d{7,8}$`)
+	if !imdbPattern.MatchString(strings.ToLower(q)) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{
+			Results:      []schema.IndexedTorrent{},
+			Count:        0,
+			IndexedCount: 0,
+		})
+		return
+	}
+
 	logging.InfoWithRequest(r).
 		Str("target_url", targetURL).
 		Msg("Processing betor indexer request")
@@ -119,6 +132,23 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		indexedTorrents = append(indexedTorrents, ixt)
 	}
 
+
+
+	// Filtro por IMDB quando a query é um ttID
+	if q != "" {
+		imdbPattern := regexp.MustCompile(`^tt\d{7,8}$`)
+		if imdbPattern.MatchString(strings.ToLower(q)) {
+			var filtered []schema.IndexedTorrent
+			for _, it := range indexedTorrents {
+				if strings.Contains(strings.ToLower(it.IMDB), strings.ToLower(q)) {
+					filtered = append(filtered, it)
+				}
+			}
+			if len(filtered) > 0 {
+				indexedTorrents = filtered
+			}
+		}
+	}
 
 	// Apply post-processors
 	for _, processor := range i.postProcessors {
