@@ -76,7 +76,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 
 	// Bloqueia buscas por texto — só permite IMDB ID
 	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
-	if !imdbPattern.MatchString(strings.ToLower(q)) {
+	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(Response{
 			Results:      []schema.IndexedTorrent{},
