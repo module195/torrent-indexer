@@ -119,26 +119,6 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		indexedTorrents = append(indexedTorrents, ixt)
 	}
 
-// Após o loop de parse (linha ~96)
-if q != "" {
-    qNorm := strings.ToLower(q)
-    tokens := strings.Fields(qNorm)
-    var filtered []schema.IndexedTorrent
-    for _, it := range indexedTorrents {
-        // Título + URL do provider (slug PT)
-        haystack := strings.ToLower(it.Title + " " + it.OriginalTitle + " " + it.Details)
-        for _, tok := range tokens {
-            if len(tok) > 2 && strings.Contains(haystack, tok) {
-                filtered = append(filtered, it)
-                break
-            }
-        }
-    }
-    // Só aplica se não zerar tudo
-    if len(filtered) > 0 {
-        indexedTorrents = filtered
-    }
-}
 
 	// Apply post-processors
 	for _, processor := range i.postProcessors {
