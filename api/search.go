@@ -73,7 +73,7 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Apply similarity filter
+	// Apply similarity filter against original query
 	results = AddSimilarityCheck(nil, r, results)
 
 	// If poor results and query looks English, try Portuguese translation
@@ -87,11 +87,11 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 				q := ptRequest.URL.Query()
 				q.Set("q", ptQueryStr)
 				ptRequest.URL.RawQuery = q.Encode()
-				
+
 				ptResults = AddSimilarityCheck(nil, ptRequest, ptResults)
-				if len(ptResults) > len(results) {
-					results = ptResults
-				}
+
+				// Merge: keep items with good similarity against EN or PT query
+				results = mergeByBestSimilarity(results, ptResults, 0.4)
 			}
 		}
 	}
@@ -105,6 +105,38 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+// mergeByBestSimilarity keeps items that score >= minSim against either query.
+// Dedupes by InfoHash, keeping the higher similarity.
+func mergeByBestSimilarity(a, b []schema.IndexedTorrent, minSim float32) []schema.IndexedTorrent {
+	best := make(map[string]schema.IndexedTorrent)
+
+	consider := func(it schema.IndexedTorrent) {
+		if it.Similarity < minSim {
+			return
+		}
+		if existing, ok := best[it.InfoHash]; ok {
+			if it.Similarity > existing.Similarity {
+				best[it.InfoHash] = it
+			}
+		} else {
+			best[it.InfoHash] = it
+		}
+	}
+
+	for _, it := range a {
+		consider(it)
+	}
+	for _, it := range b {
+		consider(it)
+	}
+
+	out := make([]schema.IndexedTorrent, 0, len(best))
+	for _, it := range best {
+		out = append(out, it)
+	}
+	return out
 }
 
 // normalizeQuery cleans the query string
@@ -130,7 +162,7 @@ func shouldTryTranslation(query string, results []schema.IndexedTorrent) bool {
 		return true
 	}
 	// Check if best result has low similarity
-	if len(results) > 0 && results[0].Similarity < 0.3 {
+	if len(results) > 0 && results[0].Similarity < 0.5 {
 		return true
 	}
 	// Check if query looks English (no Portuguese chars)
@@ -142,30 +174,30 @@ func shouldTryTranslation(query string, results []schema.IndexedTorrent) bool {
 func translateToPT(query string) string {
 	// Common translations (normalized, no special chars)
 	translations := map[string]string{
-		"spider man brand new day":    "homem aranha um novo dia",
-		"spider man":                  "homem aranha",
-		"spiderman":                   "homem aranha",
-		"the batman":                  "batman",
-		"avengers":                    "vingadores",
-		"iron man":                    "homem de ferro",
-		"captain america":             "capitao america",
-		"black widow":                 "viuva negra",
-		"doctor strange":              "doutor estranho",
-		"guardians of the galaxy":     "guardioes da galaxia",
-		"ant man":                     "homem formiga",
-		"black panther":               "pantera negra",
-		"wonder woman":                "mulher maravilha",
-		"joker":                       "coringa",
-		"fantastic four":              "quarteto fantastico",
+		"spider man brand new day": "homem aranha um novo dia",
+		"spider man":               "homem aranha",
+		"spiderman":                "homem aranha",
+		"the batman":               "batman",
+		"avengers":                 "vingadores",
+		"iron man":                 "homem de ferro",
+		"captain america":          "capitao america",
+		"black widow":              "viuva negra",
+		"doctor strange":           "doutor estranho",
+		"guardians of the galaxy":  "guardioes da galaxia",
+		"ant man":                  "homem formiga",
+		"black panther":            "pantera negra",
+		"wonder woman":             "mulher maravilha",
+		"joker":                    "coringa",
+		"fantastic four":           "quarteto fantastico",
 	}
 
 	qLower := strings.ToLower(query)
-	
+
 	// Direct match
 	if pt, ok := translations[qLower]; ok {
 		return pt
 	}
-	
+
 	// Partial match (longest first)
 	var matches []string
 	for en := range translations {
@@ -185,10 +217,9 @@ func translateToPT(query string) string {
 		en := matches[0]
 		return strings.Replace(qLower, en, translations[en], 1)
 	}
-	
+
 	return query
 }
-
 
 // HealthHandler provides a health check endpoint for Meilisearch.
 func (h *MeilisearchHandler) HealthHandler(w http.ResponseWriter, r *http.Request) {
