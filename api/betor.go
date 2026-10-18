@@ -139,13 +139,22 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		imdbPattern := regexp.MustCompile(`^tt\d{7,8}$`)
 		if imdbPattern.MatchString(strings.ToLower(q)) {
 			var filtered []schema.IndexedTorrent
+			var noImdb []schema.IndexedTorrent
 			for _, it := range indexedTorrents {
-				if strings.Contains(strings.ToLower(it.IMDB), strings.ToLower(q)) {
+				imdbLower := strings.ToLower(it.IMDB)
+				queryLower := strings.ToLower(q)
+				if strings.Contains(imdbLower, queryLower) {
 					filtered = append(filtered, it)
+				} else if it.IMDB == "" {
+					noImdb = append(noImdb, it)
 				}
 			}
+			// Prioriza resultados com IMDB correspondente
 			if len(filtered) > 0 {
 				indexedTorrents = filtered
+			} else if len(noImdb) > 0 {
+				// Fallback: se nenhum tem IMDB, retorna os sem IMDB
+				indexedTorrents = noImdb
 			}
 		}
 	}
