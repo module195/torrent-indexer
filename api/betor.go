@@ -34,14 +34,39 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		i.metrics.IndexerRequests.WithLabelValues(metadata.Label).Inc()
 	}()
 
-	ctx := r.Context()
+		ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	page := r.URL.Query().Get("page")
 
 	var targetURL string
 	base := strings.TrimRight(metadata.URL, "/")
+	exactMatch := false
+
 	if q != "" {
-		targetURL = base + "/search/?q=" + url.QueryEscape(q)
+		// Decode first (mesmo padrão do baixarapido)
+		decoded, err := url.QueryUnescape(q)
+		if err != nil {
+			decoded = q
+		}
+		decoded = strings.ReplaceAll(decoded, "+", " ")
+		decoded = strings.TrimSpace(decoded)
+
+		// Remove aspas existentes para evitar ""query""
+		if strings.HasPrefix(decoded, `"`) && strings.HasSuffix(decoded, `"`) && len(decoded) > 1 {
+			decoded = strings.Trim(decoded, `"`)
+			exactMatch = true
+		}
+
+		// Exact match: envolve em aspas (estilo baixarapido)
+		// Se não for exact, manda sem aspas (site do betor zera muitos resultados com aspas)
+		var searchQuery string
+		if exactMatch {
+			searchQuery = `"` + decoded + `"`
+		} else {
+			searchQuery = decoded
+		}
+
+		targetURL = base + "/search/?q=" + url.QueryEscape(searchQuery)
 	} else if page != "" && page != "1" {
 		targetURL = base + "/filmes-e-series/page/" + page + "/"
 	} else {
