@@ -85,13 +85,30 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	var indexedTorrents []schema.IndexedTorrent
+		var indexedTorrents []schema.IndexedTorrent
 	for _, item := range items {
 		ixt, err := parseBetorItem(ctx, i, item)
 		if err != nil || ixt.InfoHash == "" {
 			continue
 		}
 		indexedTorrents = append(indexedTorrents, ixt)
+	}
+
+	// ← AQUI (após linha 96, antes do post-processors)
+	if q != "" {
+		qNorm := strings.ToLower(q)
+		tokens := strings.Fields(qNorm)
+		var filtered []schema.IndexedTorrent
+		for _, it := range indexedTorrents {
+			titleNorm := strings.ToLower(it.Title + " " + it.OriginalTitle)
+			for _, tok := range tokens {
+				if len(tok) > 2 && strings.Contains(titleNorm, tok) {
+					filtered = append(filtered, it)
+					break
+				}
+			}
+		}
+		indexedTorrents = filtered
 	}
 
 	// Apply post-processors
