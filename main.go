@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	handler "github.com/module195/torrent-indexer/api"
@@ -27,6 +28,7 @@ var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
 // skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
 // Brazilian torrent sites don't support IMDB search, so we skip these
 // queries to avoid unnecessary FlareSolverr requests.
+// Exception: the betor indexer supports IMDb, so we let those requests through.
 func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Libera o indexer betor (ele suporta IMDb)
@@ -47,6 +49,7 @@ func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func main() {
 	// Initialize logging first
 	logging.InitLogger()
