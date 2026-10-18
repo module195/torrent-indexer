@@ -174,7 +174,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 	// Filter low similarity
 	// Skip filter for IMDB queries (tt1234567) — no semantic similarity
-	imdbPattern := regexp.MustCompile(`^tt\d{7,8}$`)
+	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
 	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) {
 		var threshold float32 = 0.05
 		if qEpisode != "" {
