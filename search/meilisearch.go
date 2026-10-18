@@ -123,9 +123,11 @@ func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.Indexed
 	if limit > 200 {
 		limit = 200
 	}
-	requestBody := map[string]interface{}{
-		"q":     query,
-		"limit": limit,
+		requestBody := map[string]interface{}{
+		"q":                    query,
+		"limit":                limit,
+		"matchingStrategy":     "all",
+		"attributesToSearchOn": []string{"title", "original_title"},
 	}
 
 	jsonData, err := json.Marshal(requestBody)
