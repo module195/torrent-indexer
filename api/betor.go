@@ -132,7 +132,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.Index(pageTitle, " - "); idx > 0 {
 		expectedTitle = strings.TrimSpace(pageTitle[:idx])
 	}
-	expectedNorm := normalizeForMatch(expectedTitle)
+	expectedNorm := normalizeForMatchBetor(expectedTitle)
 
 	var indexedTorrents []schema.IndexedTorrent
 	for _, item := range items {
@@ -144,7 +144,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 		// Relevance filter: discard results that don't reasonably match the page title
 		// This removes polluted entries (Supergirl, O Diabo Veste Prada 2, etc.)
 		// that the catalog incorrectly associates with this IMDb ID.
-		if expectedNorm != "" && !isRelevantToTitle(ixt.Title, expectedNorm) && !isRelevantToTitle(ixt.OriginalTitle, expectedNorm) {
+		if expectedNorm != "" && !isRelevantToTitleBetor(ixt.Title, expectedNorm) && !isRelevantToTitleBetor(ixt.OriginalTitle, expectedNorm) {
 			continue
 		}
 
@@ -537,8 +537,8 @@ func cleanBetorTitle(raw string) string {
 	return strings.TrimSpace(s)
 }
 
-// normalizeForMatch lowercases, removes accents roughly, and strips non-alphanumeric.
-func normalizeForMatch(s string) string {
+// normalizeForMatchBetor lowercases, removes accents roughly, and strips non-alphanumeric.
+func normalizeForMatchBetor(s string) string {
 	s = strings.ToLower(s)
 	// basic accent strip (enough for PT-BR titles)
 	replacer := strings.NewReplacer(
@@ -562,14 +562,14 @@ func normalizeForMatch(s string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// isRelevantToTitle returns true if the torrent title shares significant keywords with the expected title.
+// isRelevantToTitleBetor returns true if the torrent title shares significant keywords with the expected title.
 // Requires at least 2 matching significant words (length >= 3), or 1 if the expected title is short.
-func isRelevantToTitle(torrentTitle, expectedNorm string) bool {
+func isRelevantToTitleBetor(torrentTitle, expectedNorm string) bool {
 	if expectedNorm == "" || torrentTitle == "" {
 		return true // don't filter when we have nothing to compare
 	}
-	torrentNorm := normalizeForMatch(torrentTitle)
-	expectedWords := significantWords(expectedNorm)
+	torrentNorm := normalizeForMatchBetor(torrentTitle)
+	expectedWords := significantWordsBetor(expectedNorm)
 	if len(expectedWords) == 0 {
 		return true
 	}
@@ -592,7 +592,7 @@ func isRelevantToTitle(torrentTitle, expectedNorm string) bool {
 	return matches >= threshold
 }
 
-func significantWords(s string) []string {
+func significantWordsBetor(s string) []string {
 	var out []string
 	stop := map[string]bool{"the": true, "a": true, "an": true, "of": true, "and": true, "um": true, "uma": true, "de": true, "do": true, "da": true, "dos": true, "das": true, "o": true, "os": true, "as": true}
 	for _, w := range strings.Fields(s) {
