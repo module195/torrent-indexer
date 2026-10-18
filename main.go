@@ -120,7 +120,7 @@ func main() {
 	//indexerMux.HandleFunc("/indexers/vaca_torrent", indexers.HandlerVacaTorrentIndexer)
 	indexerMux.HandleFunc("/indexers/torrentfilmeshds", indexers.HandlerTorrentFilmesHDsIndexer)
 	indexerMux.HandleFunc("/indexers/bludv_ru", indexers.HandlerBludvRuIndexer)
-	indexerMux.HandleFunc("/indexers/betor", indexers.HandlerBetorIndexer)
+	//indexerMux.HandleFunc("/indexers/betor", indexers.HandlerBetorIndexer)
 	indexerMux.HandleFunc("/indexers/manual", indexers.HandlerManualIndexer)
 	indexerMux.HandleFunc("/search", search.SearchTorrentHandler)
 	indexerMux.HandleFunc("/search/health", search.HealthHandler)
