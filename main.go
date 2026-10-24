@@ -47,7 +47,7 @@ func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 			if strings.HasPrefix(r.URL.Path, "/indexers/") {
 				w.Header().Set("X-Cache", "BYPASS")
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []interface{}{},
 				"count":   0,
 			})

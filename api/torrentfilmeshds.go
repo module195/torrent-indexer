@@ -237,7 +237,7 @@ func extractTorrentFilmesHDsLinks(doc *goquery.Document) []string {
 
 // cleanTorrentFilmesHDsTitle limpa o dn= do magnet para um título legível.
 // Preserva tags com hífen (WEB-DL, DUAL-SF, etc.) e remove sufixo (brazilian).
-func cleanTorrentFilmesHDsTitle(raw string) string {
+func cleanTorrentFilmesHDsTitle(raw string) string { //nolint:unused // ainda não chamado; mantido para uso futuro
 	if raw == "" {
 		return ""
 	}
