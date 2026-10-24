@@ -55,3 +55,9 @@ func (r *Redis) SetWithExpiration(ctx context.Context, key string, value []byte,
 func (r *Redis) Del(ctx context.Context, key string) error {
 	return r.client.Del(ctx, key).Err()
 }
+
+// SetNX sets key only when it does not exist yet; it reports whether it did.
+// Used as a simple lock between replicas.
+func (r *Redis) SetNX(ctx context.Context, key string, value []byte, expiration time.Duration) (bool, error) {
+	return r.client.SetNX(ctx, key, value, expiration).Result()
+}

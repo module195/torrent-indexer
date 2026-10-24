@@ -18,6 +18,7 @@ type IndexedTorrent struct {
 	LeechCount    int       `json:"leech_count"`
 	SeedCount     int       `json:"seed_count"`
 	Similarity    float32   `json:"similarity"`
+	Indexer       string    `json:"indexer,omitempty"`
 }
 
 type File struct {

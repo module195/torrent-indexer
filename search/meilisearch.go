@@ -117,6 +117,40 @@ func (t *SearchIndexer) IndexTorrents(torrents []schema.IndexedTorrent) error {
 	return nil
 }
 
+// UpsertDocuments adds or updates documents (PUT): fields a document does not
+// carry keep the value already stored, unlike IndexTorrents (POST), which
+// replaces the whole document. Each document needs an "id". Fails on any
+// status other than 202, so callers can log it.
+func (t *SearchIndexer) UpsertDocuments(docs []map[string]any) error {
+	url := fmt.Sprintf("%s/indexes/%s/documents?primaryKey=id", t.BaseURL, t.IndexName)
+
+	jsonData, err := json.Marshal(docs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal documents: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if t.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", t.APIKey))
+	}
+
+	resp, err := t.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upsert failed: status %d, body: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
 // SearchTorrent searches indexed torrents in Meilisearch based on the query.
 func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.IndexedTorrent, error) {
 	return t.search(query, limit, []string{"title", "original_title"})
