@@ -506,3 +506,12 @@ func Test_cleanReleaseTitle_tagPrefix(t *testing.T) {
 		}
 	}
 }
+
+func Test_cleanReleaseTitle_htmlEntities(t *testing.T) {
+	in := "Capit&atilde;o Am&eacute;rica (2011) BluRay 1080p Dublado 5.1"
+	for name, fn := range map[string]func(string) string{"rede": cleanRedeTorrentTitle, "baixarapido": cleanBaixarApidoTitle} {
+		if got := fn(in); !strings.HasPrefix(got, "Capitão América") {
+			t.Errorf("%s: got %q", name, got)
+		}
+	}
+}

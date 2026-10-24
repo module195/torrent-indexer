@@ -149,7 +149,9 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.
 		return nil, err
 	}
 
-	title := strings.TrimSpace(doc.Find("h1, .title, .entry-title").First().Text())
+	// The header block may hold the date, year and tags below the title;
+	// only its first line is the title.
+	title := strings.TrimSpace(strings.SplitN(strings.TrimSpace(doc.Find("h1, .title, .entry-title").First().Text()), "\n", 2)[0])
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("title").Text())
 	}

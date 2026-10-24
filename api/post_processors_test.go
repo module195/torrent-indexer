@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -307,5 +308,54 @@ func Test_FilterByAudioAliases(t *testing.T) {
 	got := FilterBy(nil, paramsReq(url.Values{"audio": {"en"}}), slices.Clone(in))
 	if titles := titlesOf(got); !slices.Equal(titles, []string{"dublado", "legendado"}) {
 		t.Errorf("audio=en: got %v", titles)
+	}
+}
+
+func Test_PropagateIMDB(t *testing.T) {
+	const imdb = "https://www.imdb.com/title/tt0458339/"
+	torrents := []schema.IndexedTorrent{
+		{Title: "Capitão América - O Primeiro Vingador 4K", OriginalTitle: "Capitão América - O Primeiro Vingador 4K", Year: "2011", IMDB: imdb},
+		{Title: "x", OriginalTitle: "Capitão América: O Primeiro Vingador – BluRay 3D HSBS (2011) Dublado Torrent", Year: "2011"},
+		{Title: "Capitão América (2011) BluRay 1080p Dublado 5.1 (brazilian, eng)", Year: "2011"},
+		{Title: "Capitão América 2 - O Soldado Invernal", Year: "2014"},
+		{Title: "Capitão América - O Primeiro Vingador", Year: ""},
+	}
+	got := PropagateIMDB(nil, nil, torrents)
+	if got[1].IMDB != imdb {
+		t.Errorf("same work from another site: got %q", got[1].IMDB)
+	}
+	for _, i := range []int{2, 3, 4} {
+		if got[i].IMDB != "" {
+			t.Errorf("result %d (%q) got IMDb %q, want none", i, got[i].Title, got[i].IMDB)
+		}
+	}
+}
+
+func Test_PropagateIMDBAmbiguous(t *testing.T) {
+	torrents := []schema.IndexedTorrent{
+		{Title: "Duna", Year: "2021", IMDB: "tt1160419"},
+		{Title: "Duna", Year: "2021", IMDB: "tt9999999"},
+		{Title: "Duna 1080p", Year: "2021"},
+	}
+	if got := PropagateIMDB(nil, nil, torrents); got[2].IMDB != "" {
+		t.Errorf("ambiguous key filled with %q", got[2].IMDB)
+	}
+}
+
+func Test_CleanupTitleWebsitesUnescapesHTML(t *testing.T) {
+	torrents := []schema.IndexedTorrent{{Title: "Capit&atilde;o Am&eacute;rica (2011)", OriginalTitle: "Capit&atilde;o Am&eacute;rica"}}
+	got := CleanupTitleWebsites(nil, nil, torrents)
+	if got[0].Title != "Capitão América (2011)" || got[0].OriginalTitle != "Capitão América" {
+		t.Errorf("got %q / %q", got[0].Title, got[0].OriginalTitle)
+	}
+}
+
+func Test_zeroDateOmitted(t *testing.T) {
+	b, err := json.Marshal(schema.IndexedTorrent{Title: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"date"`) {
+		t.Errorf("zero date serialized: %s", b)
 	}
 }

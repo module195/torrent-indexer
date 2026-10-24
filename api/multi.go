@@ -276,6 +276,11 @@ func mergeMultiResults(calls []multiCall, results map[int][]schema.IndexedTorren
 			out = append(out, multiTorrent{IndexedTorrent: t, FoundIn: []string{c.Indexer}})
 		}
 	}
+	ptrs := make([]*schema.IndexedTorrent, len(out))
+	for i := range out {
+		ptrs[i] = &out[i].IndexedTorrent
+	}
+	propagateIMDB(ptrs)
 	return out
 }
 
