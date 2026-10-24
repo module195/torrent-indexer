@@ -230,3 +230,19 @@ func Test_FilterByEpisode(t *testing.T) {
 		t.Errorf("episode=10:\n got %q\nwant %q", titles, want)
 	}
 }
+
+func Test_isMultiEpisodeRelease(t *testing.T) {
+	for title, want := range map[string]bool{
+		"The.Boys.S04.1080p.WEB-DL":          true,
+		"The Boys 4ª Temporada Completa":     true,
+		"Breaking Bad S01-S05 Completa":      true,
+		"Breaking.Bad.S04E08-E10.1080p":      true,
+		"Breaking Bad Todas as Temporadas":   true,
+		"The.Boys.S04E05.1080p.WEB-DL":       false,
+		"Oppenheimer.2023.1080p.BluRay.x264": false,
+	} {
+		if got := isMultiEpisodeRelease(title); got != want {
+			t.Errorf("isMultiEpisodeRelease(%q) = %v, want %v", title, got, want)
+		}
+	}
+}

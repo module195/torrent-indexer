@@ -81,8 +81,12 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 		return torrents
 	}
 
+	seriesRequest := positiveIntParam(r, "season") > 0 || positiveIntParam(r, "episode") > 0
 	return utils.ParallelFlatMap(torrents, func(it schema.IndexedTorrent) ([]schema.IndexedTorrent, error) {
-		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" {
+		// files[] is what lets a client pick the episode inside a pack, so a
+		// pack (or any release, on a season/episode request) still needs it
+		needsFiles := len(it.Files) == 0 && (seriesRequest || isMultiEpisodeRelease(it.Title))
+		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFiles {
 			return []schema.IndexedTorrent{it}, nil
 		}
 		m, err := i.magnetMetadataAPI.FetchMetadata(r.Context(), it.MagnetLink)
@@ -517,6 +521,21 @@ func parseReleaseInfo(title string) releaseInfo {
 	}
 	info.all = reReleaseAllSeasons.MatchString(s)
 	return info
+}
+
+// isMultiEpisodeRelease reports whether a release title announces more than
+// one episode: a season pack, a season range or an episode range.
+func isMultiEpisodeRelease(title string) bool {
+	info := parseReleaseInfo(title)
+	if info.all || len(info.seasons) > 0 && len(info.episodes) == 0 {
+		return true
+	}
+	for _, e := range info.episodes {
+		if e.to > e.from {
+			return true
+		}
+	}
+	return false
 }
 
 func (ri releaseInfo) empty() bool {
