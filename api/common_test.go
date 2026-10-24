@@ -2,10 +2,12 @@ package handler
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/module195/torrent-indexer/schema"
 )
 
@@ -513,5 +515,25 @@ func Test_cleanReleaseTitle_htmlEntities(t *testing.T) {
 		if got := fn(in); !strings.HasPrefix(got, "Capitão América") {
 			t.Errorf("%s: got %q", name, got)
 		}
+	}
+}
+
+func Test_sizeNearMagnet(t *testing.T) {
+	page := `<div class="downloads">
+	<a href="magnet:?xt=urn:btih:aa">1ª TEMPORADA DUBLADA 720P / 2.80 GB</a>
+	<p><span>2ª TEMPORADA DUAL ÁUDIO 720P / 4,30 GB</span> <a href="magnet:?xt=urn:btih:bb">Download</a></p>
+	<a href="magnet:?xt=urn:btih:cc">Download</a>
+	</div>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
+		got = append(got, sizeNearMagnet(s))
+	})
+	want := []string{"2.80 GB", "4.30 GB", ""}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
