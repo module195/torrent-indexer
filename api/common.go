@@ -12,15 +12,35 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/schema"
+)
+
+// Precompiled regexes shared by hot paths (compiled once, safe for concurrent use).
+var (
+	reAudioField      = regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|legenda|$))`)
+	reStartsWithDigit = regexp.MustCompile(`^\d`)
+	reYearField       = regexp.MustCompile(`(?:Lançamento|Year): (.*)`)
+	reFourDigits      = regexp.MustCompile(`\b(\d{4})\b`)
+	reYearInParens    = regexp.MustCompile(`\((\d{4})\)`)
+	reSizeGBMB        = regexp.MustCompile(`(\d+[\.,]?\d+) ?(GB|MB)`)
+	reWhitespace      = regexp.MustCompile(`\s+`)
+	reEpisodeMarkers  = regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+|ep\.?\s*\d+)\s*`)
+	reYearWord        = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	reLeadingArticle  = regexp.MustCompile(`(?i)^(the|a|o|os|as|um|uma)\s+`)
+	reSxxEyy          = regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
+	reIMDbID          = regexp.MustCompile(`^tt[0-9]{7,8}$`)
+	reQualitySuffix   = regexp.MustCompile(`(?i)(s\d+e\d+|1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado).*$`)
+	rePortugueseChars = regexp.MustCompile(`[áéíóúãõç]`)
 )
 
 // getDocument retrieves a document from the cache or makes a request to get it.
 // It first checks the Redis cache for the document body.
 func getDocument(ctx context.Context, i *Indexer, link, referer string) (*goquery.Document, error) {
 	// try to get from redis first
-	docCache, err := i.redis.Get(ctx, link)
+	docKey := cache.Key(cache.KindDoc, link, link)
+	docCache, err := i.redis.Get(ctx, docKey)
 	if err == nil {
 		i.metrics.CacheHits.WithLabelValues("document_body").Inc()
 		logging.Debug().Str("url", link).Msg("Returning document from long-lived cache")
@@ -40,7 +60,7 @@ func getDocument(ctx context.Context, i *Indexer, link, referer string) (*goquer
 	}
 
 	// set cache
-	err = i.redis.Set(ctx, link, body)
+	err = i.redis.Set(ctx, docKey, body)
 	if err != nil {
 		logging.Error().Err(err).Str("url", link).Msg("Failed to set document body in redis cache")
 	}
@@ -138,7 +158,7 @@ func getSeparator(s string) string {
 func findAudioFromText(text string) []schema.Audio {
 	var audio []schema.Audio
 	// Regex mais específico - captura apenas até o próximo campo ou fim
-	re := regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|legenda|$))`)
+	re := reAudioField
 	audioMatch := re.FindStringSubmatch(text)
 	if len(audioMatch) > 1 {
 		sep := getSeparator(audioMatch[1])
@@ -146,7 +166,7 @@ func findAudioFromText(text string) []schema.Audio {
 		for _, lang := range langs_raw {
 			lang = strings.TrimSpace(lang)
 			// Ignora números e textos muito curtos
-			if len(lang) < 3 || regexp.MustCompile(`^\d`).MatchString(lang) {
+			if len(lang) < 3 || reStartsWithDigit.MatchString(lang) {
 				continue
 			}
 			a := schema.GetAudioFromString(lang)
@@ -161,19 +181,19 @@ func findAudioFromText(text string) []schema.Audio {
 // findYearFromText extracts the year from a given text.
 // It looks for patterns like "Lançamento: 2001" in the title.
 func findYearFromText(text string, title string) (year string) {
-	re := regexp.MustCompile(`(?:Lançamento|Year): (.*)`)
+	re := reYearField
 	yearMatch := re.FindStringSubmatch(text)
 	if len(yearMatch) > 0 {
 		lancamentoText := strings.TrimSpace(yearMatch[1])
 		// Extract 4-digit year from the lançamento field
-		yearRe := regexp.MustCompile(`\b(\d{4})\b`)
+		yearRe := reFourDigits
 		if yearDigits := yearRe.FindStringSubmatch(lancamentoText); len(yearDigits) > 0 {
 			year = yearDigits[1]
 		}
 	}
 
 	if year == "" {
-		re = regexp.MustCompile(`\((\d{4})\)`)
+		re = reYearInParens
 		yearMatch := re.FindStringSubmatch(title)
 		if len(yearMatch) > 0 {
 			year = yearMatch[1]
@@ -188,7 +208,7 @@ func findYearFromText(text string, title string) (year string) {
 func findSizesFromText(text string) []string {
 	var sizes []string
 	// everything that ends with GB or MB, using ',' or '.' as decimal separator
-	re := regexp.MustCompile(`(\d+[\.,]?\d+) ?(GB|MB)`)
+	re := reSizeGBMB
 	sizesMatch := re.FindAllStringSubmatch(text, -1)
 	if len(sizesMatch) > 0 {
 		for _, size := range sizesMatch {
@@ -297,7 +317,7 @@ func buildSmartFallbackQueries(original string) []string {
 	seen := map[string]bool{}
 
 	add := func(s string) {
-		s = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(s, " "))
+		s = strings.TrimSpace(reWhitespace.ReplaceAllString(s, " "))
 		if s == "" || s == original || seen[s] || len(strings.Fields(s)) < 3 {
 			return
 		}
@@ -306,15 +326,15 @@ func buildSmartFallbackQueries(original string) []string {
 	}
 
 	// 1. Remove apenas padrões de episódio/temporada
-	noEp := regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+|ep\.?\s*\d+)\s*`).ReplaceAllString(original, " ")
+	noEp := reEpisodeMarkers.ReplaceAllString(original, " ")
 	add(noEp)
 
 	// 2. Remove ano
-	noYear := regexp.MustCompile(`\b(19|20)\d{2}\b`).ReplaceAllString(noEp, "")
+	noYear := reYearWord.ReplaceAllString(noEp, "")
 	add(noYear)
 
 	// 3. Remove artigos fracos (só se sobrar ≥ 3 palavras)
-	noArticle := regexp.MustCompile(`(?i)^(the|a|o|os|as|um|uma)\s+`).ReplaceAllString(noYear, "")
+	noArticle := reLeadingArticle.ReplaceAllString(noYear, "")
 	add(noArticle)
 
 	// 4. Primeiras 4 palavras (nunca menos que 3)
