@@ -380,6 +380,8 @@ func getAudioFromTitle(releaseTitle string, audioFromContent []schema.Audio) []s
 
 // buildSmartFallbackQueries gera fallbacks inteligentes.
 // Prioridade: 1) remover SxxEyy/temporada, 2) não encurtar abaixo de 3 palavras.
+// Não corta o título no meio: nas buscas do WordPress, um pedaço do título que
+// já não achou nada também não acha ("Outlander: Blood of My").
 func buildSmartFallbackQueries(original string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -404,12 +406,6 @@ func buildSmartFallbackQueries(original string) []string {
 	// 3. Remove artigos fracos (só se sobrar ≥ 3 palavras)
 	noArticle := reLeadingArticle.ReplaceAllString(noYear, "")
 	add(noArticle)
-
-	// 4. Primeiras 4 palavras (nunca menos que 3)
-	words := strings.Fields(noArticle)
-	if len(words) > 4 {
-		add(strings.Join(words[:4], " "))
-	}
 
 	if len(out) > 3 {
 		out = out[:3]

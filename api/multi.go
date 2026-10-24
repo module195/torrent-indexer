@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/magnet"
 	"github.com/module195/torrent-indexer/schema"
 )
@@ -123,6 +124,7 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	started := time.Now()
 	deadlineCtx, cancel := context.WithTimeout(r.Context(), deadline)
 	defer cancel()
 	// Sub-calls must not touch r once this handler returns, so they all
@@ -142,7 +144,20 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if deadlineCtx.Err() != nil {
 				return
 			}
-			done <- runMultiCall(base, j, forward)
+			res := runMultiCall(base, j, forward)
+			if time.Since(started) > deadline {
+				// The response already went out marking this call as timeout;
+				// this is the only place its real duration shows up.
+				logging.Warn().
+					Str("indexer", j.name).
+					Str("q", j.q).
+					Str("state", res.call.State).
+					Int("count", res.call.Count).
+					Int64("duration_ms", res.call.DurationMs).
+					Int64("deadline_ms", deadline.Milliseconds()).
+					Msg("multi sub-call finished after deadline")
+			}
+			done <- res
 		}()
 	}
 
@@ -171,6 +186,8 @@ collect:
 			calls[j.idx].DurationMs = deadline.Milliseconds()
 		}
 	}
+
+	logMultiCalls(calls, partial, deadline, time.Since(started))
 
 	merged := mergeMultiResults(calls, results)
 	sortParams := url.Values{}
@@ -234,6 +251,24 @@ func runMultiCall(base *http.Request, j multiJob, forward url.Values) multiResul
 	}
 	c.State, c.Count = "ok", len(resp.Results)
 	return multiResult{idx: j.idx, call: c, torrents: resp.Results}
+}
+
+// logMultiCalls writes one line per /indexers/multi request with how each
+// (indexer, q) pair went: "indexer=state/duration/count", skipped ones left out.
+func logMultiCalls(calls []multiCall, partial bool, deadline, elapsed time.Duration) {
+	parts := make([]string, 0, len(calls))
+	for _, c := range calls {
+		if c.State == "skipped" {
+			continue
+		}
+		parts = append(parts, c.Indexer+"="+c.State+"/"+strconv.FormatInt(c.DurationMs, 10)+"ms/"+strconv.Itoa(c.Count))
+	}
+	logging.Info().
+		Bool("partial", partial).
+		Int64("deadline_ms", deadline.Milliseconds()).
+		Int64("elapsed_ms", elapsed.Milliseconds()).
+		Str("calls", strings.Join(parts, " ")).
+		Msg("multi calls")
 }
 
 // errorReason extracts the {"error": "..."} message indexers write on failure.
