@@ -273,3 +273,16 @@ func (g *Goscrape) Scrape(infohash ...[]byte) ([]*ScrapeResult, error) {
 
 	return r, nil
 }
+
+// Close releases the underlying UDP connection, if any.
+func (g *Goscrape) Close() error {
+	g.Lock()
+	defer g.Unlock()
+	if g.conn == nil {
+		return nil
+	}
+	err := g.conn.Close()
+	g.conn = nil
+	g.session = time.Time{}
+	return err
+}

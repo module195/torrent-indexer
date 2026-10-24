@@ -41,7 +41,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	var targetURL string
 	base := strings.TrimRight(metadata.URL, "/")
 
-	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
+	imdbPattern := reIMDbID
 	isIMDb := imdbPattern.MatchString(strings.ToLower(q))
 
 	// Bloqueia buscas por texto — só permite IMDB ID
@@ -134,7 +134,8 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 	expectedNorm := normalizeForMatchBetor(expectedTitle)
 
-	var indexedTorrents []schema.IndexedTorrent
+	// non-nil so an empty result encodes as [] rather than null
+	indexedTorrents := make([]schema.IndexedTorrent, 0, len(items))
 	for _, item := range items {
 		ixt, err := parseBetorItem(ctx, i, item)
 		if err != nil || ixt.InfoHash == "" {
@@ -315,7 +316,7 @@ func formatBetorSize(bytes int64) string {
 // extractBetorYear looks for a 4-digit year in multiple sources:
 // 1. torrent name, 2. provider URL, 3. file names, 4. inserted date (fallback).
 func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) string {
-	yearRe := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	yearRe := reYearWord
 
 	// 1. torrent name
 	if y := yearRe.FindString(torrentName); y != "" {
@@ -346,8 +347,10 @@ func extractBetorYear(torrentName, providerURL string, item *goquery.Selection) 
 	return ""
 }
 
-// DedupByInfoHash removes duplicate torrents by info_hash, merging metadata.
-// Keeps the entry with the highest seed count and fills empty fields from others.
+// DedupByInfoHash removes duplicate torrents by info_hash (the magnet's when
+// it is missing), merging metadata: the first copy is kept, with the highest
+// seed count and empty fields filled from the others. Runs for every indexer
+// (GlobalPostProcessors), since several sites list a torrent more than once.
 // Follows the GuIndex approach of using info_hash as the canonical key.
 func DedupByInfoHash(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	type entry struct {
@@ -358,7 +361,7 @@ func DedupByInfoHash(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorre
 	var order []string
 
 	for i, t := range torrents {
-		key := strings.ToLower(strings.TrimSpace(t.InfoHash))
+		key := torrentKey(t)
 		if key == "" {
 			// No info_hash: keep as-is with unique key
 			key = fmt.Sprintf("__nohash_%d", i)
@@ -526,7 +529,7 @@ func cleanBetorTitle(raw string) string {
 
 	// Normalize spaces and hyphens
 	s = strings.ReplaceAll(s, "-", " ")
-	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = reWhitespace.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
 
 	// Restore preserved tags

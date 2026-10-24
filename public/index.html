@@ -113,6 +113,24 @@
       }
     }
 
+    // Escape text from the API (titles come from scraped sites) before it goes into innerHTML
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+
+    // Only http(s) and magnet links may become an href; anything else (javascript:, data:) becomes '#'
+    function safeUrl(value, schemes = ['http:', 'https:']) {
+      if (!value) return '#';
+      try {
+        const url = new URL(String(value), window.location.href);
+        return schemes.includes(url.protocol) ? esc(url.href) : '#';
+      } catch {
+        return '#';
+      }
+    }
+
     // Function to render a single torrent result
     function renderTorrent(torrent) {
       return `
@@ -120,22 +138,22 @@
           <!-- Torrent Title and Details -->
           <div class="flex-grow">
             <h2 class="text-2xl font-bold text-blue-400 flex items-center gap-2">
-              <span>${torrent.title}</span>
-              <span class="text-sm text-gray-400">(${torrent.year})</span>
+              <span>${esc(torrent.title)}</span>
+              <span class="text-sm text-gray-400">(${esc(torrent.year)})</span>
             </h2>
-            <p class="text-gray-500 italic mt-1">${torrent.original_title}</p>
+            <p class="text-gray-500 italic mt-1">${esc(torrent.original_title)}</p>
             <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <p><strong>Audio:</strong> ${torrent.audio.join(', ')}</p>
-              <p><strong>Size:</strong> ${torrent.size}</p>
-              <p><strong>Seeds:</strong> ${torrent.seed_count} | <strong>Leeches:</strong> ${torrent.leech_count}</p>
-              <p><strong>Info Hash:</strong> <span class="text-sm break-all text-gray-300">${torrent.info_hash}</span></p>
+              <p><strong>Audio:</strong> ${esc((torrent.audio || []).join(', '))}</p>
+              <p><strong>Size:</strong> ${esc(torrent.size)}</p>
+              <p><strong>Seeds:</strong> ${esc(torrent.seed_count)} | <strong>Leeches:</strong> ${esc(torrent.leech_count)}</p>
+              <p><strong>Info Hash:</strong> <span class="text-sm break-all text-gray-300">${esc(torrent.info_hash)}</span></p>
             </div>
           </div>
 
           <!-- Actions -->
           <div class="flex flex-col justify-between items-start md:items-end">
             <div>
-              <a href="${torrent.imdb}" target="_blank"
+              <a href="${safeUrl(torrent.imdb)}" target="_blank" rel="noopener noreferrer"
                 class="flex items-center gap-2 text-blue-500 hover:text-blue-400 font-medium">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -143,7 +161,7 @@
                 </svg>
                 View on IMDB
               </a>
-              <a href="${torrent.details}" target="_blank"
+              <a href="${safeUrl(torrent.details)}" target="_blank" rel="noopener noreferrer"
                 class="flex items-center gap-2 text-blue-500 hover:text-blue-400 font-medium mt-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -152,7 +170,7 @@
                 View Details
               </a>
             </div>
-            <a href="${torrent.magnet_link}" target="_blank"
+            <a href="${safeUrl(torrent.magnet_link, ['magnet:'])}" target="_blank"
               class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md flex items-center gap-2 mt-4">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"

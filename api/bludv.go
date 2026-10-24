@@ -215,6 +215,8 @@ func getTorrentsBluDV(ctx context.Context, i *Indexer, link, referer string) ([]
     magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
     if err != nil {
         logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+        // always send so the collector loop below doesn't block forever
+        chanIndexedTorrent <- schema.IndexedTorrent{}
         return
     }
 

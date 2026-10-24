@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +67,17 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		}
 	}
 
+	// IMDb ID (tt1234567): look it up in the imdb field instead of the titles
+	if id := strings.ToLower(query); reIMDbID.MatchString(id) {
+		results, err := h.Module.SearchTorrentByIMDB(id, limit)
+		if err != nil {
+			http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
+			return
+		}
+		writeSearchResults(w, filterByIMDBID(results, id))
+		return
+	}
+
 	// Try original query
 	results, err := h.Module.SearchTorrent(query, limit)
 	if err != nil {
@@ -96,6 +108,10 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		}
 	}
 
+	writeSearchResults(w, results)
+}
+
+func writeSearchResults(w http.ResponseWriter, results []schema.IndexedTorrent) {
 	response := map[string]interface{}{
 		"results": results,
 		"count":   len(results),
@@ -107,37 +123,54 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	}
 }
 
-// mergeByBestSimilarity keeps items that score >= minSim against either query.
-// Dedupes by InfoHash, keeping the higher similarity.
-func mergeByBestSimilarity(a, b []schema.IndexedTorrent, minSim float32) []schema.IndexedTorrent {
-	best := make(map[string]schema.IndexedTorrent)
+// reIMDbIDInLink finds the ID in an imdb field such as
+// "https://www.imdb.com/title/tt3581920/".
+var reIMDbIDInLink = regexp.MustCompile(`\btt\d{7,8}\b`)
 
-	consider := func(it schema.IndexedTorrent) {
-		if it.Similarity < minSim {
-			return
+// filterByIMDBID keeps only the torrents whose imdb link has exactly this ID
+// (tt1234567 must not match tt12345678).
+func filterByIMDBID(torrents []schema.IndexedTorrent, id string) []schema.IndexedTorrent {
+	out := make([]schema.IndexedTorrent, 0, len(torrents))
+	for _, it := range torrents {
+		if reIMDbIDInLink.FindString(strings.ToLower(it.IMDB)) == id {
+			it.Similarity = 1 // exact ID match; the stored score was computed for another query
+			out = append(out, it)
 		}
-		if existing, ok := best[it.InfoHash]; ok {
-			if it.Similarity > existing.Similarity {
-				best[it.InfoHash] = it
-			}
-		} else {
-			best[it.InfoHash] = it
-		}
-	}
-
-	for _, it := range a {
-		consider(it)
-	}
-	for _, it := range b {
-		consider(it)
-	}
-
-	out := make([]schema.IndexedTorrent, 0, len(best))
-	for _, it := range best {
-		out = append(out, it)
 	}
 	return out
 }
+
+// mergeByBestSimilarity keeps items that score >= minSim against either query.
+// Dedupes by info hash, keeping the higher similarity, and returns them by
+// similarity (then seeds), so the order is the same on every request.
+func mergeByBestSimilarity(a, b []schema.IndexedTorrent, minSim float32) []schema.IndexedTorrent {
+	out := make([]schema.IndexedTorrent, 0, len(a)+len(b))
+	pos := make(map[string]int)
+	for _, it := range slices.Concat(a, b) {
+		if it.Similarity < minSim {
+			continue
+		}
+		key := torrentKey(it)
+		if key == "" {
+			out = append(out, it)
+			continue
+		}
+		if i, ok := pos[key]; ok {
+			if it.Similarity > out[i].Similarity {
+				out[i] = it
+			}
+			continue
+		}
+		pos[key] = len(out)
+		out = append(out, it)
+	}
+	slices.SortStableFunc(out, torrentComparator(url.Values{"sortBy": {"similarity"}}))
+	return out
+}
+
+// reQueryNoise matches everything but letters (any script, accented
+// included), digits, whitespace and hyphens.
+var reQueryNoise = regexp.MustCompile(`[^\p{L}\p{N}\s\-]`)
 
 // normalizeQuery cleans the query string
 func normalizeQuery(q string) string {
@@ -148,10 +181,10 @@ func normalizeQuery(q string) string {
 	}
 	// Replace + with space
 	q = strings.ReplaceAll(q, "+", " ")
-	// Remove special chars (including colon) except alphanumeric, spaces, hyphens
-	q = regexp.MustCompile(`[^\w\s\-]`).ReplaceAllString(q, " ")
+	// Remove special chars (including colon) except letters, digits, spaces, hyphens
+	q = reQueryNoise.ReplaceAllString(q, " ")
 	// Collapse multiple spaces
-	q = regexp.MustCompile(`\s+`).ReplaceAllString(q, " ")
+	q = reWhitespace.ReplaceAllString(q, " ")
 	return strings.TrimSpace(q)
 }
 
@@ -166,7 +199,7 @@ func shouldTryTranslation(query string, results []schema.IndexedTorrent) bool {
 		return true
 	}
 	// Check if query looks English (no Portuguese chars)
-	hasPT := regexp.MustCompile(`[áéíóúãõç]`).MatchString(strings.ToLower(query))
+	hasPT := rePortugueseChars.MatchString(strings.ToLower(query))
 	return !hasPT
 }
 

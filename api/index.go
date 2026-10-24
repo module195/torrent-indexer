@@ -41,6 +41,7 @@ type PostProcessorFunc func(*Indexer, *http.Request, []schema.IndexedTorrent) []
 
 var GlobalPostProcessors = []PostProcessorFunc{
 	AddSimilarityCheck,     // Jaccard similarity
+	DedupByInfoHash,        // Drop repeated torrents (same info hash)
 	FullfilMissingMetadata, // Fill missing size or title metadata
 	CleanupTitleWebsites,   // Remove website names from titles
 	FallbackPostTitle,      // Fallback to original title if empty
