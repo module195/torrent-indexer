@@ -545,14 +545,7 @@ func cleanBaixarApidoTitle(raw string) string {
 	s = regexp.MustCompile(`(?i)^(LEGENDADO|DUBLADO|DUAL-AUDIO|DUAL)\s+`).ReplaceAllString(s, "")
 
 	// Remove tags de qualidade no início
-	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|MKV|MP4|X264|X265|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO)\s*[-.\s]*`
-	for i := 0; i < 5; i++ {
-		prev := s
-		s = regexp.MustCompile(qualityPrefix).ReplaceAllString(s, "")
-		if s == prev {
-			break
-		}
-	}
+	s = stripReleaseTagPrefix(s)
 
 	// Preserva tags com hífen
 	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "DUAL-AUDIO", "CAM-RIP"}

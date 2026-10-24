@@ -416,3 +416,19 @@ func buildSmartFallbackQueries(original string) []string {
 	}
 	return out
 }
+
+// reReleaseTagPrefix casa uma tag de qualidade/áudio no início do nome, como no
+// dn do baixarapido: "WEB-DL 2160P SEM-COMPACTAÇÃO MKV 5 1 -DUBLADO-DUAL-AUDIO- Homem Aranha ...".
+var reReleaseTagPrefix = regexp.MustCompile(`(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|2160P|FULL[\s-]?HD|SEM[\s-]*COMPACTA[CÇ][AÃ]O|SEM[\s-]*COMPRESS[AÃ]O|MKV|MP4|X264|X265|HEVC|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO|AAC|AC3|DTS|H264|H265)\s*[-.\s]*`)
+
+// stripReleaseTagPrefix tira as tags de qualidade/áudio que alguns sites põem antes do título.
+func stripReleaseTagPrefix(s string) string {
+	for i := 0; i < 10; i++ {
+		prev := s
+		s = reReleaseTagPrefix.ReplaceAllString(s, "")
+		if s == prev {
+			break
+		}
+	}
+	return s
+}
