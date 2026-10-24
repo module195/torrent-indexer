@@ -41,6 +41,12 @@ You can configure the server using the following environment variables:
 - `FLARESOLVERR_ADDRESS`: (optional) The address of the FlareSolverr instance. Default: `N/A`
 - `FLARESOLVERR_TIMEOUT_SECONDS`: (optional) Timeout for flaresolverr requests. Default: `30`
 - `FLARESOLVERR_POOL_SIZE`: (optional) Number of FlareSolverr sessions in the pool. Default: `5`
+- `FLARESOLVERR_HEALTHCHECK_SECONDS`: (optional) Interval to verify pooled FlareSolverr sessions and recreate the ones lost after a FlareSolverr restart. Default: `N/A` (disabled)
+- `REQUEST_COALESCE`: (optional) `true` makes concurrent requests for the same page URL share a single fetch. Default: `false`
+- `RESPONSE_CACHE_TTL`: (optional) Caches non-empty indexer JSON responses (keyed by indexer + full query) and coalesces identical concurrent requests; the `X-Cache` header becomes `HIT|MISS|SHARED` (it is `BYPASS` while disabled). Duration format, e.g. `5m`. Default: `N/A` (disabled)
+- `TRACKER_SCRAPE_MAX_ADDITIONAL`: (optional) Max number of UDP trackers from the extra tracker list scraped per torrent (the magnet's own trackers are always used). Default: `N/A` (all)
+- `TRACKER_SCRAPE_CONCURRENCY`: (optional) Global limit of concurrent UDP tracker scrapes. Default: `N/A` (unlimited)
+- `REDIS_NAMESPACED_KEYS`: (optional) `true` prefixes Redis keys by type (`doc:`, `doc:short:`, `peers:`, `meta:`). Old keys expire on their own. Default: `false`
 - `REQUEST_TIMEOUT_MILLISECONDS`: (optional) Timeout for external scraping requests. Default: `5000`
 - `MEILISEARCH_ADDRESS`: (optional) The address of the MeiliSearch instance. Default: `N/A`
 - `MEILISEARCH_KEY`: (optional) The API key of the MeiliSearch instance. Default: `N/A`
@@ -59,6 +65,28 @@ You can configure the server using the following environment variables:
 - `MAGNET_METADATA_API_ADDRESS`: (optional) The address of your magnet metadata API. Default: `N/A`
 - `MAGNET_METADATA_API_TIMEOUT_SECONDS`: (optional) The timeout for the magnet metadata API requests in seconds. Default: `10`
 - `INDEXER_<NAME>_URL`: (optional) Set a custom URL for the indexer. Where the "NAME" will be always uppercase indexer key with underscores. ex: `INDEXER_DODO_FILMES_URL=https://my-proxied-dodo-url.org`
+
+## API for aggregating clients (e.g. guindex)
+
+These additions are optional: existing routes and their JSON are unchanged.
+
+- **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
+- **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
+  - `api_version`: `2`
+  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429), `consecutive_failures`, `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
+  - `search`: `{"meilisearch": true|false}` (configured and answering; probed at most once a minute)
+  - `features`: `{"multi": true, "x_cache": true, "response_cache": true|false}`
+
+  An older server ignores `v=2` and answers the plain payload, so clients can check `api_version` and fall back.
+- **`GET /indexers/multi?q=a&q=b&indexers=x,y&deadline_ms=8000`**: runs every indexer x query pair on the server (same handlers, cache and stats as `/indexers/<name>`) and answers when all finish or at the deadline, whichever comes first.
+  - `q`: repeatable, up to 10 distinct values (trimmed, case-insensitive dedup). Required.
+  - `indexers`: comma-separated names; default: all of `indexer_names`.
+  - `deadline_ms`: default `8000`, clamped to `500..60000`. Calls still running at the deadline keep going in the background (up to 2 min) so their result lands in the response cache for the next request.
+  - Any other parameter (`limit`, `sortBy`, `sortDirection`, `audio`, `year`, `imdb`, ...) is passed to each call; `limit` and the sort are applied again to the merged list.
+  - Pairs an indexer can't answer are skipped instead of called (IMDb ids only go to `betor`, text queries only to the others).
+  - Response: `results` (deduplicated by info hash: highest seeders/leechers and similarity, union of audio/trackers, plus `found_in` with every indexer that had it), `count`, `partial` (true if any call timed out) and `calls`: one entry per pair with `indexer`, `q`, `state` (`ok|error|skipped|timeout`), `status`, `count`, `duration_ms`, `cache` (the call's `X-Cache`) and `reason` (`imdb_not_supported`, `text_not_supported`, `unknown_indexer` or the indexer's error).
+  - `/search` is unchanged and still only queries Meilisearch.
+
 ## Integrating with Jackett
 
 You can integrate this indexer with Jackett by adding a new Torznab custom indexer. Here is an example of how to do it for the `bludv` indexer:
