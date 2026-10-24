@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -140,6 +141,20 @@ func main() {
 
 	icfg := handler.IndexersConfig{
 		FallbackTitleEnabled: os.Getenv("FALLBACK_TITLE_ENABLED") == "true",
+	}
+
+	// Optional: load the betor catalog dump into Meilisearch on an interval
+	if dumpURL := os.Getenv("BETOR_DUMP_URL"); dumpURL != "" && searchIndex.BaseURL != "" {
+		interval := 8 * time.Hour
+		if v := os.Getenv("BETOR_DUMP_INTERVAL"); v != "" {
+			if d, err := str2duration.ParseDuration(v); err == nil && d >= time.Minute {
+				interval = d
+			} else {
+				logging.Error().Str("value", v).Msg("Invalid BETOR_DUMP_INTERVAL; using 8h")
+			}
+		}
+		logging.Info().Str("url", dumpURL).Dur("interval", interval).Msg("Enabling betor dump sync")
+		(&handler.BetorDumpSync{URL: dumpURL, Interval: interval, Search: searchIndex, Redis: redis}).Start(context.Background())
 	}
 
 	indexers := handler.NewIndexers(icfg, redis, metrics, req, searchIndex, magnetMetadataAPI)

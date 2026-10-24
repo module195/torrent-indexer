@@ -50,6 +50,8 @@ You can configure the server using the following environment variables:
 - `REQUEST_TIMEOUT_MILLISECONDS`: (optional) Timeout for external scraping requests. Default: `5000`
 - `MEILISEARCH_ADDRESS`: (optional) The address of the MeiliSearch instance. Default: `N/A`
 - `MEILISEARCH_KEY`: (optional) The API key of the MeiliSearch instance. Default: `N/A`
+- `BETOR_DUMP_URL`: (optional) URL of the betor catalog dump (e.g. `https://catalogo-data.betor.top/items.json`). When set, together with `MEILISEARCH_ADDRESS`, the indexer loads the whole catalog into Meilisearch at start and then on every interval. Documents are upserted (PUT), so fields a scraper stored for the same hash are kept; base32 hashes become lowercase hex; a torrent whose name does not match the other names of its IMDb ID keeps its document but loses the IMDb link. A Redis lock keeps several replicas from running it at once. Default: `N/A` (disabled)
+- `BETOR_DUMP_INTERVAL`: (optional) How often to reload `BETOR_DUMP_URL`, in duration format (minimum `1m`). Default: `8h`
 - `REDIS_HOST`: (optional) The address of the Redis instance. Default: `localhost`
 - `REDIS_PASSWORD`: (optional) The password of the Redis instance. Default: `N/A`
 - `SHORT_LIVED_CACHE_EXPIRATION` (optional) The expiration time of the short-lived cache in duration format. Default: `30m`
