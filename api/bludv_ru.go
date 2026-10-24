@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -155,10 +154,7 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.
 		title = strings.TrimSpace(doc.Find("title").Text())
 	}
 
-	year := ""
-	if m := regexp.MustCompile(`\b(19|20)\d{2}\b`).FindStringSubmatch(title); len(m) > 0 {
-		year = m[1]
-	}
+	year := reYearWord.FindString(title)
 
 	imdbLink := ""
 	doc.Find("a[href*='imdb.com']").Each(func(_ int, s *goquery.Selection) {
