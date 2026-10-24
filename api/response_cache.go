@@ -101,8 +101,8 @@ func (rc *ResponseCache) Wrap(label string, next http.HandlerFunc) http.HandlerF
 				bw.status = http.StatusOK
 			}
 			res := capturedResponse{status: bw.status, contentType: bw.header.Get("Content-Type"), body: bw.buf.Bytes()}
-			if res.status == http.StatusOK && isNonEmptyResult(res.body) {
-				if err := rc.redis.SetWithExpiration(ctx, key, res.body, rc.ttl); err != nil {
+			if ttl, ok := responseCacheTTL(res, rc.ttl); ok {
+				if err := rc.redis.SetWithExpiration(ctx, key, res.body, ttl); err != nil {
 					logging.Error().Err(err).Str("indexer", label).Msg("Failed to cache indexer response")
 				}
 			}
@@ -128,12 +128,33 @@ func (rc *ResponseCache) Wrap(label string, next http.HandlerFunc) http.HandlerF
 	}
 }
 
-// isNonEmptyResult reports whether body is an indexer JSON response with at
-// least one result. Empty results are not cached so a transient site failure
-// doesn't stick for the whole TTL.
-func isNonEmptyResult(body []byte) bool {
-	var probe struct {
-		Count int `json:"count"`
+// emptyResultTTL caps how long a response with no results is cached.
+const emptyResultTTL = 2 * time.Minute
+
+// responseCacheTTL says whether res may be cached and for how long. Responses
+// with results get the full TTL. With no results, a page that listed torrents
+// (indexed_count > 0) was real and everything was filtered out, so it gets a
+// short TTL; a page that listed nothing may be a challenge or a transient
+// site failure and is not cached at all.
+func responseCacheTTL(res capturedResponse, full time.Duration) (time.Duration, bool) {
+	if res.status != http.StatusOK {
+		return 0, false
 	}
-	return json.Unmarshal(body, &probe) == nil && probe.Count > 0
+	var probe struct {
+		Count        int `json:"count"`
+		IndexedCount int `json:"indexed_count"`
+	}
+	if json.Unmarshal(res.body, &probe) != nil {
+		return 0, false
+	}
+	if probe.Count > 0 {
+		return full, true
+	}
+	if probe.IndexedCount > 0 {
+		if full < emptyResultTTL {
+			return full, true
+		}
+		return emptyResultTTL, true
+	}
+	return 0, false
 }

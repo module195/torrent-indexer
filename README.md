@@ -43,7 +43,7 @@ You can configure the server using the following environment variables:
 - `FLARESOLVERR_POOL_SIZE`: (optional) Number of FlareSolverr sessions in the pool. Default: `5`
 - `FLARESOLVERR_HEALTHCHECK_SECONDS`: (optional) Interval to verify pooled FlareSolverr sessions and recreate the ones lost after a FlareSolverr restart. Default: `N/A` (disabled)
 - `REQUEST_COALESCE`: (optional) `true` makes concurrent requests for the same page URL share a single fetch. Default: `false`
-- `RESPONSE_CACHE_TTL`: (optional) Caches non-empty indexer JSON responses (keyed by indexer + full query) and coalesces identical concurrent requests; the `X-Cache` header becomes `HIT|MISS|SHARED` (it is `BYPASS` while disabled). Duration format, e.g. `5m`. Default: `N/A` (disabled)
+- `RESPONSE_CACHE_TTL`: (optional) Caches indexer JSON responses (keyed by indexer + full query; a response with 0 results is kept for at most 2 minutes, and only when the site listed torrents that were all filtered out) and coalesces identical concurrent requests; the `X-Cache` header becomes `HIT|MISS|SHARED` (it is `BYPASS` while disabled). Duration format, e.g. `5m`. Default: `N/A` (disabled)
 - `TRACKER_SCRAPE_MAX_ADDITIONAL`: (optional) Max number of UDP trackers from the extra tracker list scraped per torrent (the magnet's own trackers are always used). Default: `N/A` (all)
 - `TRACKER_SCRAPE_CONCURRENCY`: (optional) Global limit of concurrent UDP tracker scrapes. Default: `N/A` (unlimited)
 - `REDIS_NAMESPACED_KEYS`: (optional) `true` prefixes Redis keys by type (`doc:`, `doc:short:`, `peers:`, `meta:`). Old keys expire on their own. Default: `false`
@@ -75,7 +75,7 @@ These additions are optional: existing routes and their JSON are unchanged.
 - **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
 - **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
   - `api_version`: `2`
-  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429), `consecutive_failures`, `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
+  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429; true again 5 minutes after the last failure so clients retry it), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
   - `search`: `{"meilisearch": true|false}` (configured and answering; probed at most once a minute)
   - `features`: `{"multi": true, "x_cache": true, "response_cache": true|false}`
 

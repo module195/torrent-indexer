@@ -62,12 +62,18 @@ const (
 	statsWindow = 50
 	// unhealthyAfter consecutive failed runs mark an indexer as unhealthy.
 	unhealthyAfter = 3
+	// healthRetryAfter is how long an unhealthy indexer stays out before it is
+	// reported healthy again, so clients that skip unhealthy indexers retry
+	// it. A failed retry keeps it out for another interval; a success resets
+	// the failure count.
+	healthRetryAfter = 5 * time.Minute
 )
 
 type indexerStat struct {
 	durations           []time.Duration // ring buffer of successful runs
 	next                int
 	consecutiveFailures int
+	lastFailure         time.Time
 }
 
 // IndexerStats keeps a small in-memory view of how each indexer is doing, so
@@ -76,10 +82,11 @@ type indexerStat struct {
 type IndexerStats struct {
 	mu     sync.Mutex
 	byName map[string]*indexerStat
+	now    func() time.Time
 }
 
 func NewIndexerStats() *IndexerStats {
-	return &IndexerStats{byName: map[string]*indexerStat{}}
+	return &IndexerStats{byName: map[string]*indexerStat{}, now: time.Now}
 }
 
 // statusWriter passes everything through and remembers the status code.
@@ -141,6 +148,7 @@ func (s *IndexerStats) record(name string, status int, d time.Duration) {
 	}
 	if isFailureStatus(status) {
 		st.consecutiveFailures++
+		st.lastFailure = s.now()
 		return
 	}
 	st.consecutiveFailures = 0
@@ -162,6 +170,7 @@ type IndexerStatus struct {
 	SupportsIMDb        bool   `json:"supports_imdb"`
 	Healthy             bool   `json:"healthy"`
 	ConsecutiveFailures int    `json:"consecutive_failures"`
+	LastFailureAt       string `json:"last_failure_at,omitempty"` // RFC 3339, UTC
 	P50Ms               *int64 `json:"p50_ms,omitempty"` // absent until a run succeeded
 	Samples             int    `json:"samples"`
 }
@@ -170,12 +179,16 @@ type IndexerStatus struct {
 func (s *IndexerStats) Snapshot() []IndexerStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
 	out := make([]IndexerStatus, 0, len(ActiveIndexers))
 	for _, c := range ActiveIndexers {
 		is := IndexerStatus{Name: c.Name, SupportsText: c.SupportsText, SupportsIMDb: c.SupportsIMDb, Healthy: true}
 		if st := s.byName[c.Name]; st != nil {
 			is.ConsecutiveFailures = st.consecutiveFailures
-			is.Healthy = st.consecutiveFailures < unhealthyAfter
+			is.Healthy = st.consecutiveFailures < unhealthyAfter || now.Sub(st.lastFailure) >= healthRetryAfter
+			if !st.lastFailure.IsZero() {
+				is.LastFailureAt = st.lastFailure.UTC().Format(time.RFC3339)
+			}
 			is.Samples = len(st.durations)
 			if len(st.durations) > 0 {
 				sorted := slices.Clone(st.durations)
