@@ -1,6 +1,7 @@
 package utils_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/module195/torrent-indexer/utils"
@@ -191,5 +192,13 @@ func TestParseSize(t *testing.T) {
 				t.Errorf("ParseSize() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStableUniqKeepsFirstOccurrence(t *testing.T) {
+	got := utils.StableUniq([]string{"1.62 GB", "11.4 GB", "1.62 GB", "2 GB"})
+	want := []string{"1.62 GB", "11.4 GB", "2 GB"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("StableUniq() = %v, want %v", got, want)
 	}
 }

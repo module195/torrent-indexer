@@ -55,36 +55,18 @@ func ParallelFlatMap[T any, R any](iterable []T, mapper func(item T) ([]R, error
 	return mappedItems
 }
 
-// StableUniq removes duplicates from a slice while maintaining the order of elements.
+// StableUniq removes duplicates from a slice while maintaining the order of
+// elements: each value stays where it first appears.
 func StableUniq(s []string) []string {
-	var uniq []map[string]interface{}
-	m := make(map[string]map[string]interface{})
-	for i, v := range s {
-		m[v] = map[string]interface{}{
-			"v": v,
-			"i": i,
-		}
-	}
-	// to order by index
-	for _, v := range m {
-		uniq = append(uniq, v)
-	}
-
-	// sort by index
-	for i := 0; i < len(uniq); i++ {
-		for j := i + 1; j < len(uniq); j++ {
-			if uniq[i]["i"].(int) > uniq[j]["i"].(int) {
-				uniq[i], uniq[j] = uniq[j], uniq[i]
-			}
-		}
-	}
-
-	// get only values
 	var uniqValues []string
-	for _, v := range uniq {
-		uniqValues = append(uniqValues, v["v"].(string))
+	seen := make(map[string]bool, len(s))
+	for _, v := range s {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		uniqValues = append(uniqValues, v)
 	}
-
 	return uniqValues
 }
 

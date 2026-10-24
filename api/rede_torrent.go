@@ -402,11 +402,10 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			titleProcessed := processTitle(title, magnetAudio)
 
 			var mySize string
-			// Associa size pelo índice ou usa o primeiro disponível
-			if it < len(size) {
+			// Associa size pelo índice só quando há um tamanho por magnet;
+			// senão o tamanho da página iria para releases de outra qualidade
+			if len(size) == len(magnetLinks) {
 				mySize = size[it]
-			} else if len(size) > 0 {
-				mySize = size[0]
 			}
 			// Fallback: size do magnet xl=
 			if mySize == "" {

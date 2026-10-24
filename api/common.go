@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/schema"
+	"github.com/module195/torrent-indexer/utils"
 )
 
 // Precompiled regexes shared by hot paths (compiled once, safe for concurrent use).
@@ -212,11 +214,35 @@ func findSizesFromText(text string) []string {
 	sizesMatch := re.FindAllStringSubmatch(text, -1)
 	if len(sizesMatch) > 0 {
 		for _, size := range sizesMatch {
-			sizes = append(sizes, size[0])
+			// "1,62 GB" -> "1.62 GB", the format the size parsers expect
+			sizes = append(sizes, strings.Replace(size[0], ",", ".", 1))
 		}
 	}
 	return sizes
 }
+
+// reReleaseNameSize matches a size written in a release name: "999MB",
+// "1.6GB", "2,5 GB".
+var reReleaseNameSize = regexp.MustCompile(`(?i)(?:^|[^0-9])(\d+(?:[.,]\d+)?) ?(gb|mb|gib|mib)(?:$|[^a-z0-9])`)
+
+// releaseSize returns the size a magnet states for itself: its exact length
+// (xl=) or, failing that, the only size written in its release name. Both
+// belong to that torrent, unlike the sizes listed on the page.
+func releaseSize(magnetLink, releaseTitle string) string {
+	if m := reMagnetXL.FindStringSubmatch(magnetLink); len(m) > 1 {
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil && n > 0 {
+			return utils.FormatBytes(n)
+		}
+	}
+	matches := reReleaseNameSize.FindAllStringSubmatch(releaseTitle, -1)
+	if len(matches) != 1 {
+		return ""
+	}
+	unit := strings.ToUpper(matches[0][2][:1]) + "B"
+	return strings.Replace(matches[0][1], ",", ".", 1) + " " + unit
+}
+
+var reMagnetXL = regexp.MustCompile(`[?&]xl=(\d+)`)
 
 var imdbLinkRE = regexp.MustCompile(`https://www.imdb.com(/[a-z]{2})?/title/(tt\d+)/?`)
 var subtitlesHintIMDBLinkRE = regexp.MustCompile(`imdbid-((tt)?\d+)`)

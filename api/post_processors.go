@@ -59,6 +59,19 @@ func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedT
 	return torrents
 }
 
+// PreferReleaseSize replaces the size taken from the page with the one the
+// magnet states for itself (xl= or a size in the release name), when there is
+// one: a page lists the sizes of all its releases, and pairing them with the
+// magnets by position goes wrong whenever the counts differ.
+func PreferReleaseSize(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	for i, it := range torrents {
+		if s := releaseSize(it.MagnetLink, stripAudioSuffix(it.Title)); s != "" {
+			torrents[i].Size = s
+		}
+	}
+	return torrents
+}
+
 // FullfilMissingMetadata fills in missing metadata for indexed torrents
 func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	if r == nil {

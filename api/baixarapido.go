@@ -443,7 +443,11 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 		titleProcessed := processTitle(h1, magnetAudio)
 
 		// Size do magnet xl= se não encontrou no texto
-		mySize := size
+		// um único tamanho na página só vale quando ela tem um único magnet
+		mySize := ""
+		if len(sizes) == 1 || len(magnetLinks) == 1 {
+			mySize = size
+		}
 		if mySize == "" {
 			if xl := regexp.MustCompile(`[?&]xl=(\d+)`).FindStringSubmatch(magnetLink); len(xl) > 1 {
 				if bytes, err := strconv.ParseInt(xl[1], 10, 64); err == nil && bytes > 0 {

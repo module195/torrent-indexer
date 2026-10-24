@@ -443,3 +443,39 @@ func Test_findYearFromText(t *testing.T) {
 		})
 	}
 }
+
+func Test_releaseSize(t *testing.T) {
+	tests := []struct {
+		name, magnet, title, want string
+	}{
+		{"xl wins", "magnet:?xt=urn:btih:abc&xl=1073741824&dn=x", "Filme 999MB", "1.00 GB"},
+		{"size in release name", "magnet:?xt=urn:btih:abc", "Oppenheimer.2023.720p.BluRay.999MB.x264-GalaxyRG", "999 MB"},
+		{"decimal comma", "magnet:?xt=urn:btih:abc", "Filme 2023 1080p 2,5 GB", "2.5 GB"},
+		{"two sizes is ambiguous", "magnet:?xt=urn:btih:abc", "Filme 1.6 GB / 11.4 GB", ""},
+		{"no size", "magnet:?xt=urn:btih:abc", "Oppenheimer.2023.2160p.REMUX", ""},
+		{"resolution is not a size", "magnet:?xt=urn:btih:abc", "Filme.1080p.x265", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := releaseSize(tt.magnet, tt.title); got != tt.want {
+				t.Errorf("releaseSize() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_findSizesFromText_decimalComma(t *testing.T) {
+	got := findSizesFromText("Tamanho: 1,62 GB | 900 MB")
+	want := []string{"1.62 GB", "900 MB"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("findSizesFromText() = %v, want %v", got, want)
+	}
+}
+
+func Test_appendAudioISO639_2Code_idempotent(t *testing.T) {
+	a := []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish}
+	once := appendAudioISO639_2Code("Filme 2023", a)
+	if twice := appendAudioISO639_2Code(once, a); twice != once {
+		t.Errorf("appendAudioISO639_2Code() twice = %q, want %q", twice, once)
+	}
+}
