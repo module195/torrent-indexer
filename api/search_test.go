@@ -103,8 +103,13 @@ type searchPayload struct {
 
 func runSearch(t *testing.T, h *MeilisearchHandler, q string) searchPayload {
 	t.Helper()
+	return runSearchParams(t, h, url.Values{"q": {q}})
+}
+
+func runSearchParams(t *testing.T, h *MeilisearchHandler, params url.Values) searchPayload {
+	t.Helper()
 	rec := httptest.NewRecorder()
-	h.SearchTorrentHandler(rec, httptest.NewRequest(http.MethodGet, "/search?q="+url.QueryEscape(q), nil))
+	h.SearchTorrentHandler(rec, httptest.NewRequest(http.MethodGet, "/search?"+params.Encode(), nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -151,6 +156,62 @@ func Test_searchHandlerKeepsAccents(t *testing.T) {
 	}
 	if p.Count != 1 {
 		t.Errorf("count %d, want 1", p.Count)
+	}
+}
+
+func Test_searchHandlerAppliesFilters(t *testing.T) {
+	h, _ := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Breaking Bad 1ª Temporada", InfoHash: "a1", Year: "2008", IMDB: "https://www.imdb.com/title/tt0903747/"},
+		{Title: "El Camino A Breaking Bad Movie", InfoHash: "b2", Year: "2019", IMDB: "https://www.imdb.com/title/tt9243946/"},
+	})
+
+	cases := []struct {
+		params url.Values
+		want   []string
+	}{
+		{url.Values{"q": {"breaking bad"}, "year": {"2019"}}, []string{"El Camino A Breaking Bad Movie"}},
+		{url.Values{"q": {"breaking bad"}, "imdb": {"tt0903747"}}, []string{"Breaking Bad 1ª Temporada"}},
+		{url.Values{"q": {"breaking bad"}, "season": {"1"}}, []string{"Breaking Bad 1ª Temporada"}},
+		// the IMDb branch is filtered too
+		{url.Values{"q": {"tt0903747"}, "year": {"2019"}}, []string{}},
+	}
+	for _, c := range cases {
+		p := runSearchParams(t, h, c.params)
+		if titles := titlesOf(p.Results); !slices.Equal(titles, c.want) || p.Count != len(c.want) {
+			t.Errorf("%s: got %v (count %d), want %v", c.params.Encode(), titles, p.Count, c.want)
+		}
+	}
+}
+
+func Test_searchHandlerSorting(t *testing.T) {
+	h, _ := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Breaking Bad 1ª Temporada", InfoHash: "a1", SeedCount: 1},
+		{Title: "Breaking Bad 2ª Temporada", InfoHash: "b2", SeedCount: 9},
+	})
+
+	// same similarity: more seeds first
+	if got := titlesOf(runSearch(t, h, "breaking bad").Results); !slices.Equal(got, []string{"Breaking Bad 2ª Temporada", "Breaking Bad 1ª Temporada"}) {
+		t.Errorf("default order %v", got)
+	}
+	p := runSearchParams(t, h, url.Values{"q": {"breaking bad"}, "sortBy": {"seed_count"}, "sortDirection": {"asc"}})
+	if got := titlesOf(p.Results); !slices.Equal(got, []string{"Breaking Bad 1ª Temporada", "Breaking Bad 2ª Temporada"}) {
+		t.Errorf("sortBy=seed_count asc: %v", got)
+	}
+}
+
+func Test_searchHandlerFilterResultsFalseWithTranslation(t *testing.T) {
+	h, requests := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Homem-Aranha Sem Volta Para Casa", InfoHash: "a1"},
+		{Title: "Zzz Qqq", InfoHash: "z9"},
+	})
+
+	p := runSearchParams(t, h, url.Values{"q": {"spider man"}, "filter_results": {"false"}})
+
+	if n := len(requests()); n != 2 {
+		t.Fatalf("%d searches, want the EN one and the PT translation", n)
+	}
+	if titles := titlesOf(p.Results); !slices.Equal(titles, []string{"Homem-Aranha Sem Volta Para Casa", "Zzz Qqq"}) {
+		t.Errorf("got %v, want everything, best first", titles)
 	}
 }
 

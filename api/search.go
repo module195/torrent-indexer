@@ -74,7 +74,7 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 			http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 			return
 		}
-		writeSearchResults(w, filterByIMDBID(results, id))
+		writeSearchResults(w, filterAndSort(r, filterByIMDBID(results, id)))
 		return
 	}
 
@@ -103,12 +103,32 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 				ptResults = AddSimilarityCheck(nil, ptRequest, ptResults)
 
 				// Merge: keep items with good similarity against EN or PT query
-				results = mergeByBestSimilarity(results, ptResults, 0.4)
+				results = mergeByBestSimilarity(results, ptResults, translationMinSimilarity(r))
 			}
 		}
 	}
 
-	writeSearchResults(w, results)
+	writeSearchResults(w, filterAndSort(r, results))
+}
+
+// filterAndSort applies the same audio/year/imdb/season/episode filters and
+// sortBy/sortDirection ordering as /indexers/<name>.
+func filterAndSort(r *http.Request, results []schema.IndexedTorrent) []schema.IndexedTorrent {
+	results = FilterBy(nil, r, results)
+	slices.SortStableFunc(results, torrentComparator(r.URL.Query()))
+	return results
+}
+
+// translationMinSimilarity is the score a hit needs against the EN or the PT
+// query to survive the merge, following filter_results and min_similarity.
+func translationMinSimilarity(r *http.Request) float32 {
+	if !filterResults(r) {
+		return 0
+	}
+	if minSim, ok := minSimilarityParam(r); ok {
+		return minSim
+	}
+	return 0.4
 }
 
 func writeSearchResults(w http.ResponseWriter, results []schema.IndexedTorrent) {
