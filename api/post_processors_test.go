@@ -246,3 +246,22 @@ func Test_isMultiEpisodeRelease(t *testing.T) {
 		}
 	}
 }
+
+func Test_FilterByEpisodeGluedAndNamelessReleases(t *testing.T) {
+	page := "https://site/the-boys-4-temporada/"
+	in := []schema.IndexedTorrent{
+		{Title: "TheBoysS04E05WEB-DL1080pDUAL", Details: page},
+		{Title: "TheBoysS04E08WEB-DL1080pDUAL", Details: page},
+		// magnet without dn: the title fell back to the page title
+		{Title: "The Boys 4ª Temporada", OriginalTitle: "The Boys 4ª Temporada (brazilian)", Details: page},
+		// a named season pack on the same page is still a pack
+		{Title: "The.Boys.S04.1080p.WEB-DL", OriginalTitle: "The Boys 4ª Temporada (brazilian)", Details: page},
+		// a real pack from another page keeps matching through its page title
+		{Title: "The.Boys.Complete.1080p", OriginalTitle: "The Boys 4ª Temporada Completa", Details: "https://site/pack/"},
+	}
+	got := FilterBy(nil, paramsReq(url.Values{"season": {"4"}, "episode": {"5"}}), slices.Clone(in))
+	want := []string{"TheBoysS04E05WEB-DL1080pDUAL", "The.Boys.S04.1080p.WEB-DL", "The.Boys.Complete.1080p"}
+	if titles := titlesOf(got); !slices.Equal(titles, want) {
+		t.Errorf("season=4&episode=5:\n got %q\nwant %q", titles, want)
+	}
+}

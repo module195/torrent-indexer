@@ -409,6 +409,18 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 		return torrents
 	}
 
+	// Pages that list single episodes: a release from one of them that has no
+	// name of its own (magnet without dn, title taken from the page) is most
+	// likely one more episode, not the pack the page title announces.
+	episodePages := map[string]bool{}
+	if episode > 0 {
+		for _, it := range torrents {
+			if it.Details != "" && len(parseReleaseInfo(it.Title).episodes) > 0 {
+				episodePages[it.Details] = true
+			}
+		}
+	}
+
 	return utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
 		// Filter by Audio
 		if len(requestedAudioTags) > 0 {
@@ -441,6 +453,9 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 		// Filter by season / episode
 		if season > 0 || episode > 0 {
 			info := parseReleaseInfo(it.Title)
+			if episode > 0 && len(info.episodes) == 0 && episodePages[it.Details] && titleFromPage(it) {
+				return false
+			}
 			if info.empty() {
 				info = parseReleaseInfo(it.OriginalTitle)
 			}
@@ -453,6 +468,13 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	})
 }
 
+// titleFromPage reports whether a release has no name of its own: its title
+// is the post title (what the indexers use when the magnet has no dn).
+func titleFromPage(it schema.IndexedTorrent) bool {
+	t := strings.TrimSpace(stripAudioSuffix(it.Title))
+	return t == "" || t == strings.TrimSpace(stripAudioSuffix(it.OriginalTitle))
+}
+
 // positiveIntParam reads a query param that must be a positive integer; 0 means absent or invalid.
 func positiveIntParam(r *http.Request, name string) int {
 	n, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get(name)))
@@ -463,6 +485,8 @@ func positiveIntParam(r *http.Request, name string) int {
 }
 
 var (
+	// "theboyss04e08": a season/episode marker glued to the name
+	reGluedEpisode = regexp.MustCompile(`([a-z])(s\d{1,2} ?e\d)`)
 	// S04E10, S04E08-E10, S01E01-03
 	reReleaseEpisode = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})(?: ?- ?e?(\d{1,3})\b)?`)
 	// S01-S05, S01 a S05
@@ -489,6 +513,7 @@ type releaseInfo struct {
 func parseReleaseInfo(title string) releaseInfo {
 	s := accentReplacer.Replace(strings.ToLower(title))
 	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	s = reGluedEpisode.ReplaceAllString(s, "$1 $2")
 	s = reWhitespace.ReplaceAllString(s, " ")
 
 	var info releaseInfo
