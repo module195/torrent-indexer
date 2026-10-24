@@ -42,6 +42,7 @@ type PostProcessorFunc func(*Indexer, *http.Request, []schema.IndexedTorrent) []
 var GlobalPostProcessors = []PostProcessorFunc{
 	AddSimilarityCheck,     // Jaccard similarity
 	DedupByInfoHash,        // Drop repeated torrents (same info hash)
+	PropagateIMDB,          // Share the IMDb link among releases of the same work
 	PreferReleaseSize,      // Size stated by the magnet itself (xl=, release name)
 	FullfilMissingMetadata, // Fill missing size or title metadata
 	CleanupTitleWebsites,   // Remove website names from titles

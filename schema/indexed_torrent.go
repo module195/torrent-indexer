@@ -10,7 +10,7 @@ type IndexedTorrent struct {
 	IMDB          string    `json:"imdb"`
 	Audio         []Audio   `json:"audio"`
 	MagnetLink    string    `json:"magnet_link"`
-	Date          time.Time `json:"date"`
+	Date          time.Time `json:"date,omitzero"`
 	InfoHash      string    `json:"info_hash"`
 	Trackers      []string  `json:"trackers"`
 	Size          string    `json:"size"`

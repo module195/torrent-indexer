@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"html"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -504,7 +505,7 @@ func cleanBaixarApidoTitle(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	s := raw
+	s := html.UnescapeString(raw)
 
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")

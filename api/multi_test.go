@@ -279,3 +279,15 @@ func Test_xCacheBypass(t *testing.T) {
 		t.Fatalf("got %q %q", rec.Header().Get("X-Cache"), rec.Body.String())
 	}
 }
+
+func Test_mergeMultiResultsPropagatesIMDB(t *testing.T) {
+	calls := []multiCall{{Indexer: "bludv"}, {Indexer: "rede_torrent"}}
+	results := map[int][]schema.IndexedTorrent{
+		0: {{Title: "Capitão América - O Primeiro Vingador", Year: "2011", InfoHash: "aa", IMDB: "tt0458339"}},
+		1: {{Title: "Capitão América: O Primeiro Vingador 1080p", Year: "2011", InfoHash: "bb"}},
+	}
+	out := mergeMultiResults(calls, results)
+	if len(out) != 2 || out[1].IMDB != "tt0458339" {
+		t.Fatalf("got %+v", out)
+	}
+}

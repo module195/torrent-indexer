@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,9 +19,87 @@ import (
 // CleanupTitleWebsites removes unwanted characters from the title
 func CleanupTitleWebsites(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	for i := range torrents {
-		torrents[i].Title = utils.RemoveKnownWebsites(torrents[i].Title)
+		torrents[i].Title = utils.RemoveKnownWebsites(html.UnescapeString(torrents[i].Title))
+		torrents[i].OriginalTitle = html.UnescapeString(torrents[i].OriginalTitle)
 	}
 	return torrents
+}
+
+// PropagateIMDB fills the empty IMDb link of a result with the link of other
+// results of the same work (same title core and year).
+func PropagateIMDB(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	ptrs := make([]*schema.IndexedTorrent, len(torrents))
+	for i := range torrents {
+		ptrs[i] = &torrents[i]
+	}
+	propagateIMDB(ptrs)
+	return torrents
+}
+
+// imdbNoiseWords are release words that do not belong to the work's title.
+var imdbNoiseWords = map[string]bool{
+	"torrent": true, "download": true, "dublado": true, "dual": true, "audio": true,
+	"legendado": true, "nacional": true, "4k": true, "uhd": true, "hd": true, "fullhd": true,
+	"remux": true, "bluray": true, "brrip": true, "bdrip": true, "web": true, "dl": true,
+	"webrip": true, "webdl": true, "3d": true, "hsbs": true, "imax": true, "open": true,
+	"matte": true, "hdr": true, "hdr10": true, "dv": true, "x264": true, "x265": true,
+	"hevc": true, "h264": true, "h265": true, "mkv": true, "mp4": true, "720p": true,
+	"1080p": true, "2160p": true, "480p": true, "5": true, "1": true, "7": true,
+	"filme": true, "versao": true, "estendida": true, "extended": true,
+}
+
+var reYearToken = regexp.MustCompile(`^(19|20)\d{2}$`)
+
+// titleCore reduces a title to the words that name the work, so that releases
+// of the same work from different sites produce the same key.
+func titleCore(t schema.IndexedTorrent) string {
+	title := t.OriginalTitle
+	if strings.TrimSpace(title) == "" {
+		title = t.Title
+	}
+	title = strings.SplitN(stripAudioSuffix(title), "\n", 2)[0]
+	words := strings.Fields(reNonAlphanumeric.ReplaceAllString(normalizeForMatch(title), " "))
+	core := words[:0]
+	for _, w := range words {
+		if imdbNoiseWords[w] || reYearToken.MatchString(w) {
+			continue
+		}
+		core = append(core, w)
+	}
+	return strings.Join(core, " ")
+}
+
+// propagateIMDB copies the IMDb link across results of the same work. A key
+// with more than one distinct link is ambiguous and is left alone.
+func propagateIMDB(torrents []*schema.IndexedTorrent) {
+	key := func(t *schema.IndexedTorrent) string {
+		core := titleCore(*t)
+		if core == "" || t.Year == "" {
+			return ""
+		}
+		return core + "|" + t.Year
+	}
+	links := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, t := range torrents {
+		k := key(t)
+		if k == "" || t.IMDB == "" {
+			continue
+		}
+		if prev, ok := links[k]; ok && prev != t.IMDB {
+			ambiguous[k] = true
+		}
+		links[k] = t.IMDB
+	}
+	for _, t := range torrents {
+		if t.IMDB != "" {
+			continue
+		}
+		k := key(t)
+		if link, ok := links[k]; ok && !ambiguous[k] {
+			t.IMDB = link
+		}
+	}
 }
 
 func AppendAudioTags(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
