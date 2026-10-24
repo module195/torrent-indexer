@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
@@ -21,7 +24,13 @@ const (
 
 var challangeRegex = regexp.MustCompile(`(?i)(just a moment|cf-chl-bypass|under attack)`)
 
+// coalesceTimeout bounds a shared (coalesced) fetch, which runs detached from
+// any single caller's context.
+const coalesceTimeout = 2 * time.Minute
+
 type Requster struct {
+	coalesce                  bool
+	sf                        singleflight.Group
 	fs                        *FlareSolverr
 	c                         *cache.Redis
 	httpClient                *http.Client
@@ -41,7 +50,14 @@ func NewRequester(fs *FlareSolverr, c *cache.Redis, timeout time.Duration) *Requ
 		},
 	}
 
-	return &Requster{fs: fs, httpClient: httpClient, c: c, shortLivedCacheExpiration: 30 * time.Minute}
+	return &Requster{
+		fs:                        fs,
+		httpClient:                httpClient,
+		c:                         c,
+		shortLivedCacheExpiration: 30 * time.Minute,
+		// Phase 2 (opt-in): concurrent requests for the same URL share one fetch
+		coalesce: os.Getenv("REQUEST_COALESCE") == "true",
+	}
 }
 
 func (i *Requster) SetShortLivedCacheExpiration(expiration time.Duration) {
@@ -58,13 +74,48 @@ func (i *Requster) GetDocument(ctx context.Context, url string, referer ...strin
 	}
 
 	// try request from short-lived cache
-	key := fmt.Sprintf("%s:%s", cacheKey, url)
+	key := cache.Key(cache.KindDocShort, url, fmt.Sprintf("%s:%s", cacheKey, url))
 	bodyByte, err := i.c.Get(ctx, key)
 	if err == nil {
 		logging.Debug().Str("url", url).Msg("Returning from short-lived cache")
 		body = io.NopCloser(bytes.NewReader(bodyByte))
 		return body, nil
 	}
+
+	if !i.coalesce {
+		return i.fetchDocument(ctx, url, ref, key)
+	}
+
+	ch := i.sf.DoChan(key, func() (interface{}, error) {
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), coalesceTimeout)
+		defer cancel()
+		rc, err := i.fetchDocument(fetchCtx, url, ref, key)
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		return io.ReadAll(rc)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		if res.Shared {
+			logging.Debug().Str("url", url).Msg("Request coalesced with an in-flight fetch")
+		}
+		// each caller gets its own reader over the shared bytes
+		return io.NopCloser(bytes.NewReader(res.Val.([]byte))), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// fetchDocument fetches url with the plain client, falling back to
+// FlareSolverr, and stores valid responses in the short-lived cache.
+func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.ReadCloser, error) {
+	var body io.ReadCloser
+	var bodyByte []byte
 
 	// try request with plain client
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -107,7 +158,9 @@ func (i *Requster) GetDocument(ctx context.Context, url string, referer ...strin
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 	bodyByte = buf.Bytes()
+	servedByPlainClient := resp != nil
 	if hasChallange(bodyByte) {
+		servedByPlainClient = false
 		// try request with flare solverr
 		body, err = i.fs.Get(ctx, url, 3)
 		if err != nil {
@@ -122,13 +175,22 @@ func (i *Requster) GetDocument(ctx context.Context, url string, referer ...strin
 		logging.Debug().Str("url", url).Msg("Request served from plain client")
 	}
 
+	// don't cache error pages (404/5xx) served by the plain client; they are
+	// still returned so callers behave exactly as before
+	cacheable := !servedByPlainClient || (resp.StatusCode >= 200 && resp.StatusCode < 300)
+
 	// save response to cache if it's not a challange, body is not empty and is valid HTML
 	if !hasChallange(bodyByte) && len(bodyByte) > 0 && utils.IsValidHTML(string(bodyByte)) {
-		err = i.c.SetWithExpiration(ctx, key, bodyByte, i.shortLivedCacheExpiration)
-		if err != nil {
-			logging.Error().Err(err).Str("url", url).Msg("Failed to save response to cache")
+		if cacheable {
+			err = i.c.SetWithExpiration(ctx, key, bodyByte, i.shortLivedCacheExpiration)
+			if err != nil {
+				logging.Error().Err(err).Str("url", url).Msg("Failed to save response to cache")
+			} else {
+				logging.Debug().Str("url", url).Msg("Saved to cache")
+			}
+		} else {
+			logging.Debug().Str("url", url).Int("status", resp.StatusCode).Msg("Not caching non-2xx response")
 		}
-		logging.Debug().Str("url", url).Msg("Saved to cache")
 	} else {
 		return nil, fmt.Errorf("response is a challange")
 	}
@@ -137,7 +199,7 @@ func (i *Requster) GetDocument(ctx context.Context, url string, referer ...strin
 }
 
 func (i *Requster) ExpireDocument(ctx context.Context, url string) error {
-	key := fmt.Sprintf("%s:%s", cacheKey, url)
+	key := cache.Key(cache.KindDocShort, url, fmt.Sprintf("%s:%s", cacheKey, url))
 	return i.c.Del(ctx, key)
 }
 
