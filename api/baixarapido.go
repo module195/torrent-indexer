@@ -1,13 +1,14 @@
 package handler
 
 import (
-	"html"
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -374,10 +375,12 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 	// Magnets
 	var magnetLinks []string
+	var magnetSizes []string // size written on each magnet's own button
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists && href != "" {
 			magnetLinks = append(magnetLinks, href)
+			magnetSizes = append(magnetSizes, sizeNearMagnet(s))
 		}
 	})
 
@@ -386,7 +389,7 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 	}
 
 	var results []schema.IndexedTorrent
-	for _, magnetLink := range magnetLinks {
+	for idx, magnetLink := range magnetLinks {
 		magnetLink = normalizeMagnet(magnetLink)
 		magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
 		if err != nil {
@@ -445,8 +448,9 @@ func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]sch
 
 		// Size do magnet xl= se não encontrou no texto
 		// um único tamanho na página só vale quando ela tem um único magnet
-		mySize := ""
-		if len(sizes) == 1 || len(magnetLinks) == 1 {
+		// o rótulo do próprio botão ("... 720P / 4.30 GB") vale mais que a página
+		mySize := magnetSizes[idx]
+		if mySize == "" && (len(sizes) == 1 || len(magnetLinks) == 1) {
 			mySize = size
 		}
 		if mySize == "" {
@@ -499,6 +503,26 @@ if strings.Contains(checkText, "legendado") ||
 	}
 
 	return results, nil
+}
+
+// sizeNearMagnet returns the size written on a magnet's button: in the link
+// itself or in the closest element around it that names exactly one size.
+// An element naming several sizes holds other releases too, so the search
+// stops there.
+func sizeNearMagnet(a *goquery.Selection) string {
+	node := a
+	for depth := 0; depth < 4 && node.Length() > 0 && !node.Is("body"); depth++ {
+		sizes := slices.Compact(findSizesFromText(node.Text()))
+		switch len(sizes) {
+		case 1:
+			return sizes[0]
+		case 0:
+			node = node.Parent()
+		default:
+			return ""
+		}
+	}
+	return ""
 }
 
 func cleanBaixarApidoTitle(raw string) string {
