@@ -29,12 +29,14 @@ var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
 // skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
 // Brazilian torrent sites don't support IMDB search, so we skip these
 // queries to avoid unnecessary FlareSolverr requests.
-// Exception: the betor indexer supports IMDb, so we let those requests through.
+// Exceptions: the betor indexer supports IMDb, and /search looks the ID up in
+// the imdb field of the Meilisearch index, so we let those requests through.
 func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Libera o indexer betor (ele suporta IMDb) e o /indexers/multi, que
-		// aplica as mesmas regras por indexer (veja handler.ActiveIndexers)
-		if strings.HasPrefix(r.URL.Path, "/indexers/betor") || r.URL.Path == "/indexers/multi" {
+		// Libera o indexer betor (ele suporta IMDb), o /indexers/multi, que
+		// aplica as mesmas regras por indexer (veja handler.ActiveIndexers), e
+		// o /search, que busca o ID no campo imdb do Meilisearch
+		if strings.HasPrefix(r.URL.Path, "/indexers/betor") || r.URL.Path == "/indexers/multi" || r.URL.Path == "/search" {
 			next.ServeHTTP(w, r)
 			return
 		}
