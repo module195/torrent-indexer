@@ -458,7 +458,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			}
 
 			var mySize string
-			if it < len(size) {
+			if len(size) == len(magnetLinks) {
 				mySize = size[it]
 			}
 			// Fallback: xl= do magnet (exact length em bytes)

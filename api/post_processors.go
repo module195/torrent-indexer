@@ -59,6 +59,19 @@ func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedT
 	return torrents
 }
 
+// PreferReleaseSize replaces the size taken from the page with the one the
+// magnet states for itself (xl= or a size in the release name), when there is
+// one: a page lists the sizes of all its releases, and pairing them with the
+// magnets by position goes wrong whenever the counts differ.
+func PreferReleaseSize(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	for i, it := range torrents {
+		if s := releaseSize(it.MagnetLink, stripAudioSuffix(it.Title)); s != "" {
+			torrents[i].Size = s
+		}
+	}
+	return torrents
+}
+
 // FullfilMissingMetadata fills in missing metadata for indexed torrents
 func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	if r == nil {
@@ -68,8 +81,12 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 		return torrents
 	}
 
+	seriesRequest := positiveIntParam(r, "season") > 0 || positiveIntParam(r, "episode") > 0
 	return utils.ParallelFlatMap(torrents, func(it schema.IndexedTorrent) ([]schema.IndexedTorrent, error) {
-		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" {
+		// files[] is what lets a client pick the episode inside a pack, so a
+		// pack (or any release, on a season/episode request) still needs it
+		needsFiles := len(it.Files) == 0 && (seriesRequest || isMultiEpisodeRelease(it.Title))
+		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFiles {
 			return []schema.IndexedTorrent{it}, nil
 		}
 		m, err := i.magnetMetadataAPI.FetchMetadata(r.Context(), it.MagnetLink)
@@ -148,8 +165,8 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
-		mainTitle := extractMainTitle(it.Title)
-		originalTitle := extractMainTitle(it.OriginalTitle)
+		mainTitle := extractMainTitle(stripAudioSuffix(it.Title))
+		originalTitle := extractMainTitle(cleanOriginalTitleForMatch(it.OriginalTitle))
 
 		// Normalize for matching
 		combined := normalize(mainTitle + " " + originalTitle)
@@ -247,7 +264,33 @@ func normalize(s string) string {
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	s = accentReplacer.Replace(s)
+	// "Duna - Parte" would keep three spaces and stop matching "duna parte"
+	s = reWhitespace.ReplaceAllString(s, " ")
+	s = reSequelNumberWord.ReplaceAllStringFunc(s, func(m string) string {
+		f := strings.Fields(m)
+		return f[0] + " " + sequelNumberWords[f[1]]
+	})
 	return strings.TrimSpace(s)
+}
+
+// "parte dois" and "parte 2" name the same sequel; only number words right
+// after parte/part/volume/capitulo are converted ("um sonho" stays as is).
+var (
+	sequelNumberWords = map[string]string{
+		"um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "quatro": "4", "cinco": "5",
+		"one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+	}
+	reSequelNumberWord = regexp.MustCompile(`\b(?:parte|part|volume|vol|capitulo|chapter) (?:um|uma|dois|duas|tres|quatro|cinco|one|two|three|four|five)\b`)
+)
+
+// cleanOriginalTitleForMatch keeps only the post title: some sites put the
+// whole post header (several lines with date and tags) in original_title,
+// and the audio tags the indexer appended are not part of the name.
+func cleanOriginalTitleForMatch(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	return stripAudioSuffix(strings.TrimSpace(s))
 }
 
 // extractMainTitle extracts the main title before year/quality patterns
@@ -374,7 +417,7 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	if audioParam != "" {
 		parts := strings.Split(audioParam, ",")
 		for _, p := range parts {
-			if t := strings.TrimSpace(strings.ToLower(p)); t != "" {
+			if t := audioFilterTag(p); t != "" {
 				requestedAudioTags = append(requestedAudioTags, t)
 			}
 		}
@@ -390,6 +433,18 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	// If no filters are active, return original list
 	if len(requestedAudioTags) == 0 && yearParam == "" && imdbParam == "" && season == 0 && episode == 0 {
 		return torrents
+	}
+
+	// Pages that list single episodes: a release from one of them that has no
+	// name of its own (magnet without dn, title taken from the page) is most
+	// likely one more episode, not the pack the page title announces.
+	episodePages := map[string]bool{}
+	if episode > 0 {
+		for _, it := range torrents {
+			if it.Details != "" && len(parseReleaseInfo(it.Title).episodes) > 0 {
+				episodePages[it.Details] = true
+			}
+		}
 	}
 
 	return utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
@@ -424,6 +479,9 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 		// Filter by season / episode
 		if season > 0 || episode > 0 {
 			info := parseReleaseInfo(it.Title)
+			if episode > 0 && len(info.episodes) == 0 && episodePages[it.Details] && titleFromPage(it) {
+				return false
+			}
 			if info.empty() {
 				info = parseReleaseInfo(it.OriginalTitle)
 			}
@@ -436,6 +494,40 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	})
 }
 
+// titleFromPage reports whether a release has no name of its own: its title
+// is the post title (what the indexers use when the magnet has no dn).
+func titleFromPage(it schema.IndexedTorrent) bool {
+	t := strings.TrimSpace(stripAudioSuffix(it.Title))
+	return t == "" || t == strings.TrimSpace(stripAudioSuffix(it.OriginalTitle))
+}
+
+// audioTagAliases maps the language codes clients send to the tags results
+// carry ("brazilian", "eng"...): ISO 639-1/639-2 codes and common names.
+var audioTagAliases = map[string]string{
+	"por": "brazilian", "pt": "brazilian", "pt-br": "brazilian", "ptbr": "brazilian", "pob": "brazilian",
+	"portuguese": "brazilian", "portugues": "brazilian", "dublado": "brazilian",
+	"en": "eng", "english": "eng", "ingles": "eng",
+	"es": "spa", "spanish": "spa", "fr": "fra", "fre": "fra", "french": "fra",
+	"de": "deu", "ger": "deu", "german": "deu", "it": "ita", "italian": "ita",
+	"ja": "jpn", "japanese": "jpn", "ko": "kor", "korean": "kor",
+}
+
+// audioFilterTag turns one value of the "audio" param into the tag results
+// carry: "por", "pt-br" and "Português" all mean "brazilian".
+func audioFilterTag(v string) string {
+	t := accentReplacer.Replace(strings.TrimSpace(strings.ToLower(v)))
+	if t == "" {
+		return ""
+	}
+	if alias, ok := audioTagAliases[t]; ok {
+		return alias
+	}
+	if a := schema.GetAudioFromString(strings.TrimSpace(v)); a != nil {
+		return a.String()
+	}
+	return t
+}
+
 // positiveIntParam reads a query param that must be a positive integer; 0 means absent or invalid.
 func positiveIntParam(r *http.Request, name string) int {
 	n, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get(name)))
@@ -446,6 +538,8 @@ func positiveIntParam(r *http.Request, name string) int {
 }
 
 var (
+	// "theboyss04e08": a season/episode marker glued to the name
+	reGluedEpisode = regexp.MustCompile(`([a-z])(s\d{1,2} ?e\d)`)
 	// S04E10, S04E08-E10, S01E01-03
 	reReleaseEpisode = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})(?: ?- ?e?(\d{1,3})\b)?`)
 	// S01-S05, S01 a S05
@@ -472,6 +566,7 @@ type releaseInfo struct {
 func parseReleaseInfo(title string) releaseInfo {
 	s := accentReplacer.Replace(strings.ToLower(title))
 	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	s = reGluedEpisode.ReplaceAllString(s, "$1 $2")
 	s = reWhitespace.ReplaceAllString(s, " ")
 
 	var info releaseInfo
@@ -504,6 +599,21 @@ func parseReleaseInfo(title string) releaseInfo {
 	}
 	info.all = reReleaseAllSeasons.MatchString(s)
 	return info
+}
+
+// isMultiEpisodeRelease reports whether a release title announces more than
+// one episode: a season pack, a season range or an episode range.
+func isMultiEpisodeRelease(title string) bool {
+	info := parseReleaseInfo(title)
+	if info.all || len(info.seasons) > 0 && len(info.episodes) == 0 {
+		return true
+	}
+	for _, e := range info.episodes {
+		if e.to > e.from {
+			return true
+		}
+	}
+	return false
 }
 
 func (ri releaseInfo) empty() bool {

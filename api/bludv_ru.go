@@ -220,7 +220,7 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.
 			}
 
 			var mySize string
-			if it < len(size) {
+			if len(size) == len(magnetLinks) {
 				mySize = size[it]
 			}
 

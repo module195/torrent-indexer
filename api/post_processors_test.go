@@ -230,3 +230,82 @@ func Test_FilterByEpisode(t *testing.T) {
 		t.Errorf("episode=10:\n got %q\nwant %q", titles, want)
 	}
 }
+
+func Test_isMultiEpisodeRelease(t *testing.T) {
+	for title, want := range map[string]bool{
+		"The.Boys.S04.1080p.WEB-DL":          true,
+		"The Boys 4ª Temporada Completa":     true,
+		"Breaking Bad S01-S05 Completa":      true,
+		"Breaking.Bad.S04E08-E10.1080p":      true,
+		"Breaking Bad Todas as Temporadas":   true,
+		"The.Boys.S04E05.1080p.WEB-DL":       false,
+		"Oppenheimer.2023.1080p.BluRay.x264": false,
+	} {
+		if got := isMultiEpisodeRelease(title); got != want {
+			t.Errorf("isMultiEpisodeRelease(%q) = %v, want %v", title, got, want)
+		}
+	}
+}
+
+func Test_FilterByEpisodeGluedAndNamelessReleases(t *testing.T) {
+	page := "https://site/the-boys-4-temporada/"
+	in := []schema.IndexedTorrent{
+		{Title: "TheBoysS04E05WEB-DL1080pDUAL", Details: page},
+		{Title: "TheBoysS04E08WEB-DL1080pDUAL", Details: page},
+		// magnet without dn: the title fell back to the page title
+		{Title: "The Boys 4ª Temporada", OriginalTitle: "The Boys 4ª Temporada (brazilian)", Details: page},
+		// a named season pack on the same page is still a pack
+		{Title: "The.Boys.S04.1080p.WEB-DL", OriginalTitle: "The Boys 4ª Temporada (brazilian)", Details: page},
+		// a real pack from another page keeps matching through its page title
+		{Title: "The.Boys.Complete.1080p", OriginalTitle: "The Boys 4ª Temporada Completa", Details: "https://site/pack/"},
+	}
+	got := FilterBy(nil, paramsReq(url.Values{"season": {"4"}, "episode": {"5"}}), slices.Clone(in))
+	want := []string{"TheBoysS04E05WEB-DL1080pDUAL", "The.Boys.S04.1080p.WEB-DL", "The.Boys.Complete.1080p"}
+	if titles := titlesOf(got); !slices.Equal(titles, want) {
+		t.Errorf("season=4&episode=5:\n got %q\nwant %q", titles, want)
+	}
+}
+
+func Test_AddSimilarityCheckKeepsSequelAndPollutedOriginalTitle(t *testing.T) {
+	in := []schema.IndexedTorrent{
+		// bludv_ru: original_title is the whole post header
+		{Title: "Duna.Parte.2.2024.1080p.WEB-DL.DUAL.5.1", OriginalTitle: "Duna: Parte Dois\n24 de outubro de 2026\nWEB-DL 1080p Dual Áudio (brazilian, eng)"},
+		// rede_torrent: release named in english, audio suffix appended
+		{Title: "Dune Part Two 2024 1080p WEBRip x264 (brazilian, eng)", OriginalTitle: "Duna - Parte Dois (brazilian, eng)"},
+		{Title: "Duna Parte 2 2024 2160p (brazilian)", OriginalTitle: "Duna Parte 2"},
+	}
+	got := AddSimilarityCheck(nil, paramsReq(url.Values{"q": {"duna parte dois"}}), slices.Clone(in))
+	if len(got) != len(in) {
+		t.Fatalf("kept %d of %d: %v", len(got), len(in), titlesOf(got))
+	}
+}
+
+func Test_normalizeSequelNumbers(t *testing.T) {
+	for in, want := range map[string]string{
+		"Duna: Parte Dois":      "duna: parte 2",
+		"Dune Part Two":         "dune part 2",
+		"Duna - Parte  Dois":    "duna parte 2",
+		"um sonho de liberdade": "um sonho de liberdade",
+	} {
+		if got := normalize(in); got != want {
+			t.Errorf("normalize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func Test_FilterByAudioAliases(t *testing.T) {
+	in := []schema.IndexedTorrent{
+		{Title: "dublado", Audio: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish}},
+		{Title: "legendado", Audio: []schema.Audio{schema.AudioEnglish}},
+	}
+	for _, v := range []string{"por", "pt-br", "PT", "brazilian", "Português"} {
+		got := FilterBy(nil, paramsReq(url.Values{"audio": {v}}), slices.Clone(in))
+		if titles := titlesOf(got); !slices.Equal(titles, []string{"dublado"}) {
+			t.Errorf("audio=%s: got %v", v, titles)
+		}
+	}
+	got := FilterBy(nil, paramsReq(url.Values{"audio": {"en"}}), slices.Clone(in))
+	if titles := titlesOf(got); !slices.Equal(titles, []string{"dublado", "legendado"}) {
+		t.Errorf("audio=en: got %v", titles)
+	}
+}

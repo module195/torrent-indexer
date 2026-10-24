@@ -402,11 +402,10 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 			titleProcessed := processTitle(title, magnetAudio)
 
 			var mySize string
-			// Associa size pelo índice ou usa o primeiro disponível
-			if it < len(size) {
+			// Associa size pelo índice só quando há um tamanho por magnet;
+			// senão o tamanho da página iria para releases de outra qualidade
+			if len(size) == len(magnetLinks) {
 				mySize = size[it]
-			} else if len(size) > 0 {
-				mySize = size[0]
 			}
 			// Fallback: size do magnet xl=
 			if mySize == "" {
@@ -475,10 +474,16 @@ func buildRedeTorrentFallbackQueries(q string) []string {
 		add(cleaned)
 	}
 
-	// Primeira palavra
+	// Primeira palavra (pula artigos: buscar "the" ou "o" sozinho traz o site inteiro)
 	parts := strings.Fields(q)
 	if len(parts) > 1 {
-		add(parts[0])
+		first := parts[0]
+		if reLeadingArticle.MatchString(first+" ") && len(parts) > 2 {
+			first = parts[1]
+		}
+		if !reLeadingArticle.MatchString(first + " ") {
+			add(first)
+		}
 	}
 
 	// Duas primeiras palavras

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/module195/torrent-indexer/schema"
@@ -152,8 +153,16 @@ func (t *SearchIndexer) UpsertDocuments(docs []map[string]any) error {
 }
 
 // SearchTorrent searches indexed torrents in Meilisearch based on the query.
+// Every word must match first; when nothing does ("the boys 4 temporada",
+// "duna parte dois" against "Duna Parte 2"), it retries dropping words from
+// the end, and the caller's similarity check discards what is too far off.
 func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.IndexedTorrent, error) {
-	return t.search(query, limit, []string{"title", "original_title"})
+	attributes := []string{"title", "original_title"}
+	hits, err := t.search(query, limit, attributes, "all")
+	if err != nil || len(hits) > 0 || len(strings.Fields(query)) < 2 {
+		return hits, err
+	}
+	return t.search(query, limit, attributes, "last")
 }
 
 // SearchTorrentByIMDB searches the imdb field (an IMDb URL such as
@@ -161,10 +170,10 @@ func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.Indexed
 // sent as a phrase so Meilisearch applies neither typo tolerance nor prefix
 // matching; callers should still check the ID exactly.
 func (t *SearchIndexer) SearchTorrentByIMDB(imdbID string, limit int) ([]schema.IndexedTorrent, error) {
-	return t.search(`"`+imdbID+`"`, limit, []string{"imdb"})
+	return t.search(`"`+imdbID+`"`, limit, []string{"imdb"}, "all")
 }
 
-func (t *SearchIndexer) search(query string, limit int, attributes []string) ([]schema.IndexedTorrent, error) {
+func (t *SearchIndexer) search(query string, limit int, attributes []string, matchingStrategy string) ([]schema.IndexedTorrent, error) {
 	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
 	if limit > 200 {
 		limit = 200
@@ -172,7 +181,7 @@ func (t *SearchIndexer) search(query string, limit int, attributes []string) ([]
 	requestBody := map[string]interface{}{
 		"q":                    query,
 		"limit":                limit,
-		"matchingStrategy":     "all",
+		"matchingStrategy":     matchingStrategy,
 		"attributesToSearchOn": attributes,
 	}
 

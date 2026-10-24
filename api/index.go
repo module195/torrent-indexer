@@ -42,6 +42,7 @@ type PostProcessorFunc func(*Indexer, *http.Request, []schema.IndexedTorrent) []
 var GlobalPostProcessors = []PostProcessorFunc{
 	AddSimilarityCheck,     // Jaccard similarity
 	DedupByInfoHash,        // Drop repeated torrents (same info hash)
+	PreferReleaseSize,      // Size stated by the magnet itself (xl=, release name)
 	FullfilMissingMetadata, // Fill missing size or title metadata
 	CleanupTitleWebsites,   // Remove website names from titles
 	FallbackPostTitle,      // Fallback to original title if empty
@@ -86,7 +87,7 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 		"limit":          "maximum number of results to return",
 		"sortBy":         "sort by field (title, original_title, year, date, seed_count, leech_count, size, similarity)",
 		"sortDirection":  "sort direction (asc or desc, default: desc)",
-		"audio":          "filter by audio languages (comma separated, e.g. por,eng,brazilian)",
+		"audio":          "filter by audio languages (comma separated, e.g. brazilian,eng; por, pt-br and other ISO codes work too)",
 		"year":           "filter by year (e.g. 2020)",
 		"imdb":           "filter by imdb ID (e.g. tt1234567) - this ONLY FILTERTS results, for searching by IMDB ID use the \"q\" parameter",
 		"season":         "filter by season (e.g. 4): keeps S04, S04E10, 4ª Temporada, 1ª a 5ª Temporada, Todas as Temporadas",
