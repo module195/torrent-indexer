@@ -3,7 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"regexp"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +48,10 @@ func AppendAudioTags(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorre
 
 // SendToSearchIndexer sends the indexed torrents to the search indexer
 func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+	// nothing to do when Meilisearch is not configured or there is nothing to index
+	if i.search == nil || i.search.BaseURL == "" || len(torrents) == 0 {
+		return torrents
+	}
 	go func() {
 		_ = i.search.IndexTorrents(torrents)
 	}()
@@ -134,7 +138,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	qNorm := normalize(q)
 
 	// Extract episode info from query (e.g. s01e05)
-	epRegex := regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
+	epRegex := reSxxEyy
 	qEpisode := epRegex.FindString(qNorm)
 
 	// Query without episode for title matching
@@ -174,7 +178,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 	// Filter low similarity
 	// Skip filter for IMDB queries (tt1234567) — no semantic similarity
-	imdbPattern := regexp.MustCompile(`^tt[0-9]{7,8}$`)
+	imdbPattern := reIMDbID
 	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) {
 		var threshold float32 = 0.05
 		if qEpisode != "" {
@@ -201,31 +205,32 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	return torrents
 }
 
+var accentReplacer = strings.NewReplacer(
+	"á", "a", "à", "a", "ã", "a", "â", "a",
+	"é", "e", "è", "e", "ê", "e",
+	"í", "i", "ì", "i", "î", "i",
+	"ó", "o", "ò", "o", "õ", "o", "ô", "o",
+	"ú", "u", "ù", "u", "û", "u",
+	"ç", "c",
+)
+
 // normalize removes accents, punctuation and lowercases
 func normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
-	replacer := strings.NewReplacer(
-		"á", "a", "à", "a", "ã", "a", "â", "a",
-		"é", "e", "è", "e", "ê", "e",
-		"í", "i", "ì", "i", "î", "i",
-		"ó", "o", "ò", "o", "õ", "o", "ô", "o",
-		"ú", "u", "ù", "u", "û", "u",
-		"ç", "c",
-	)
-	s = replacer.Replace(s)
+	s = accentReplacer.Replace(s)
 	return strings.TrimSpace(s)
 }
 
 // extractMainTitle extracts the main title before year/quality patterns
 func extractMainTitle(title string) string {
 	// Remove quality/year patterns: S01E01, 1080p, WEB-DL, etc.
-	re := regexp.MustCompile(`(?i)(s\d+e\d+|1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado).*$`)
+	re := reQualitySuffix
 	title = re.ReplaceAllString(title, "")
 	// Remove year patterns
-	reYear := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	reYear := reYearWord
 	title = reYear.ReplaceAllString(title, "")
 	return strings.TrimSpace(title)
 }
@@ -257,8 +262,15 @@ func ApplySorting(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent)
 	if r == nil {
 		return torrents
 	}
-	sortBy := r.URL.Query().Get("sortBy")
-	q := r.URL.Query().Get("q")
+	slices.SortFunc(torrents, torrentComparator(r.URL.Query()))
+	return torrents
+}
+
+// torrentComparator returns the ordering requested by the "sortBy" and
+// "sortDirection" query parameters. Shared by ApplySorting and /indexers/multi.
+func torrentComparator(params url.Values) func(i, j schema.IndexedTorrent) int {
+	sortBy := params.Get("sortBy")
+	q := params.Get("q")
 	if sortBy == "" {
 		if q == "" {
 			sortBy = "date"
@@ -268,10 +280,10 @@ func ApplySorting(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent)
 		}
 	}
 
-	sortDirection := r.URL.Query().Get("sortDirection")
+	sortDirection := params.Get("sortDirection")
 	ascending := sortDirection == "asc"
 
-	slices.SortFunc(torrents, func(i, j schema.IndexedTorrent) int {
+	return func(i, j schema.IndexedTorrent) int {
 		var cmp int
 		switch sortBy {
 		case "title":
@@ -313,9 +325,7 @@ func ApplySorting(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent)
 			return cmp
 		}
 		return -cmp
-	})
-
-	return torrents
+	}
 }
 
 // FilterBy filters the results based on various query parameters
