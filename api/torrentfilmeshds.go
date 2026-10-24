@@ -357,7 +357,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	size = utils.StableUniq(size)
 
 	// Collect magnets from link.php pages (paralelo)
-	var linkPHPURLs []string
+	var linkPHPURLs, linkPHPLabels []string
 	baseURL := strings.TrimRight(torrentFilmesHDs.URL, "/")
 	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
@@ -369,7 +369,16 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			fullURL = baseURL + href
 		}
 		linkPHPURLs = append(linkPHPURLs, fullURL)
+		linkPHPLabels = append(linkPHPLabels, s.Text())
 	})
+
+	// rótulo do botão de cada magnet ("S01.1080p | MKV | Ep.01/05 | Dual Áudio")
+	labels := map[string]string{}
+	addLabel := func(mag, label string) {
+		if _, ok := labels[mag]; !ok {
+			labels[mag] = label
+		}
+	}
 
 	// resolvidos em paralelo, mas na ordem da página (o tamanho é casado por posição)
 	var magnetLinks []string
@@ -384,9 +393,10 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			}()
 		}
 		wg.Wait()
-		for _, mag := range resolved {
+		for idx, mag := range resolved {
 			if mag != "" {
 				magnetLinks = append(magnetLinks, mag)
+				addLabel(mag, linkPHPLabels[idx])
 			}
 		}
 	}
@@ -395,6 +405,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists && href != "" {
 			magnetLinks = append(magnetLinks, href)
+			addLabel(href, s.Text())
 		}
 	})
 
@@ -410,6 +421,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	for it, magnetLink := range magnetLinks {
 		it := it
 		go func(it int, magnetLink string) {
+			label := labels[magnetLink]
 			magnetLink = normalizeMagnet(magnetLink)
 
 			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
@@ -431,6 +443,18 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 			}
 			if releaseTitle == "" {
 				releaseTitle = title
+			}
+
+			// o site publica dn colado ("TedLassoS01E01-05720p"), que vira episódio errado
+			// no parser; reconstrói pelo rótulo do botão ou descarta
+			if isGluedRelease(releaseTitle) {
+				rebuilt := releaseFromButtonLabel(title, label)
+				if rebuilt == "" {
+					logging.Debug().Str("title", releaseTitle).Str("label", label).Msg("Skipping glued release without usable label")
+					chanIndexedTorrent <- schema.IndexedTorrent{}
+					return
+				}
+				releaseTitle = rebuilt
 			}
 
 			infoHash := magnetParsed.InfoHash.String()
@@ -536,4 +560,58 @@ func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 	}
 
 	return ""
+}
+
+var (
+	reLabelSeason   = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
+	reLabelQuality  = regexp.MustCompile(`(?i)\b(\d{3,4}p|4k)\b`)
+	reLabelEpisodes = regexp.MustCompile(`(?i)\bEp\.?\s*(\d{1,3})(?:\s*[/-]\s*(\d{1,3}))?`)
+	reShowSeason    = regexp.MustCompile(`(?i)\s*\d+\s*[ªºa°]?\s*temporada.*$`)
+	reShowYear      = regexp.MustCompile(`\s*\(\d{4}\).*$`)
+	reNonNameChars  = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+)
+
+// isGluedRelease reporta um dn sem separadores em volta do SxxEyy.
+func isGluedRelease(title string) bool {
+	return reGluedMarkerBefore.MatchString(title) || reGluedMarkerAfter.MatchString(title)
+}
+
+// releaseFromButtonLabel monta um nome de release a partir do título da página
+// ("Ted Lasso 1ª Temporada (2020)") e do rótulo do botão do magnet
+// ("S01.1080p | MKV | Ep.01/05 | Dual Áudio" -> "Ted.Lasso.S01E01-E05.1080p.MKV.DUAL").
+// Retorna "" quando o rótulo não diz a temporada.
+func releaseFromButtonLabel(pageTitle, label string) string {
+	season := reLabelSeason.FindStringSubmatch(label)
+	if season == nil {
+		return ""
+	}
+	name := reShowYear.ReplaceAllString(reShowSeason.ReplaceAllString(pageTitle, ""), "")
+	name = strings.Trim(reNonNameChars.ReplaceAllString(name, "."), ".")
+	if name == "" {
+		return ""
+	}
+
+	num := func(s string) int { n, _ := strconv.Atoi(s); return n }
+	marker := fmt.Sprintf("S%02d", num(season[1]))
+	if ep := reLabelEpisodes.FindStringSubmatch(label); ep != nil {
+		marker += fmt.Sprintf("E%02d", num(ep[1]))
+		if ep[2] != "" {
+			marker += fmt.Sprintf("-E%02d", num(ep[2]))
+		}
+	}
+
+	parts := []string{name, marker}
+	if q := reLabelQuality.FindString(label); q != "" {
+		parts = append(parts, q)
+	}
+	lower := strings.ToLower(label)
+	for _, tag := range []string{"mkv", "mp4"} {
+		if strings.Contains(lower, tag) {
+			parts = append(parts, strings.ToUpper(tag))
+		}
+	}
+	if strings.Contains(lower, "dual") {
+		parts = append(parts, "DUAL")
+	}
+	return strings.Join(parts, ".")
 }
