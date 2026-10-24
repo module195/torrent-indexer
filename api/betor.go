@@ -47,7 +47,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	// Bloqueia buscas por texto — só permite IMDB ID
 	if q != "" && !isIMDb {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Response{
+		_ = json.NewEncoder(w).Encode(Response{
 			Results:      []schema.IndexedTorrent{},
 			Count:        0,
 			IndexedCount: 0,
@@ -96,7 +96,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logging.ErrorWithRequest(r).Err(err).Str("url", targetURL).Msg("Failed to fetch betor page")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		i.metrics.IndexerErrors.WithLabelValues(metadata.Label).Inc()
 		return
 	}
@@ -105,7 +105,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	doc, err := goquery.NewDocumentFromReader(resp)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		i.metrics.IndexerErrors.WithLabelValues(metadata.Label).Inc()
 		return
 	}
@@ -158,7 +158,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Response{
+	_ = json.NewEncoder(w).Encode(Response{
 		Results:      indexedTorrents,
 		Count:        len(indexedTorrents),
 		IndexedCount: len(indexedTorrents),
