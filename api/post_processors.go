@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -158,8 +159,9 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		splitLength := 2
 		sim := edlib.JaccardSimilarity(combined, qNorm, splitLength)
 
-		// Check if main title matches (without episode)
-		titleMatches := strings.Contains(combined, qTitle) || strings.HasPrefix(combined, qTitle) || strings.Contains(qTitle, combined)
+		// Check if main title matches (without episode); an empty title is a
+		// substring of every query, so it never counts as a match
+		titleMatches := combined != "" && (strings.Contains(combined, qTitle) || strings.HasPrefix(combined, qTitle) || strings.Contains(qTitle, combined))
 
 		if titleMatches {
 			if qEpisode != "" {
@@ -176,14 +178,17 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		torrents[i].Similarity = sim
 	}
 
-	// Filter low similarity
+	// Filter low similarity, unless filter_results=false
 	// Skip filter for IMDB queries (tt1234567) — no semantic similarity
 	imdbPattern := reIMDbID
-	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) {
-		var threshold float32 = 0.05
+	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) && filterResults(r) {
+		threshold := defaultMinSimilarity
 		if qEpisode != "" {
 			// Query has episode: require either boost (0.5) or high base similarity
 			threshold = 0.45
+		}
+		if minSim, ok := minSimilarityParam(r); ok {
+			threshold = minSim
 		}
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
 			// If query has episode, also check title contains the episode
@@ -191,7 +196,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 				titleNorm := normalize(it.Title)
 				hasEpisode := strings.Contains(titleNorm, qEpisode)
 				// Must have episode match OR very high similarity
-				return hasEpisode && it.Similarity >= threshold || it.Similarity >= 0.48
+				return hasEpisode && it.Similarity >= threshold || it.Similarity >= max(threshold, 0.48)
 			}
 			return it.Similarity >= threshold
 		})
@@ -203,6 +208,27 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	})
 
 	return torrents
+}
+
+// defaultMinSimilarity drops what the sites' full-text search adds around the
+// real hits (other shows that mention the title in the post body score up to
+// ~0.29, close spellings and translations of the title score 0.4+).
+const defaultMinSimilarity float32 = 0.35
+
+// filterResults reads "filter_results"; only an explicit false turns the
+// similarity filter off.
+func filterResults(r *http.Request) bool {
+	v, err := strconv.ParseBool(r.URL.Query().Get("filter_results"))
+	return err != nil || v
+}
+
+// minSimilarityParam reads "min_similarity" (0 to 1).
+func minSimilarityParam(r *http.Request) (float32, bool) {
+	v, err := strconv.ParseFloat(r.URL.Query().Get("min_similarity"), 32)
+	if err != nil || v < 0 || v > 1 {
+		return 0, false
+	}
+	return float32(v), true
 }
 
 var accentReplacer = strings.NewReplacer(
@@ -340,7 +366,9 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	// Parse filter parameters
 	audioParam := r.URL.Query().Get("audio")
 	yearParam := r.URL.Query().Get("year")
-	imdbParam := r.URL.Query().Get("imdb")
+	imdbParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("imdb")))
+	season := positiveIntParam(r, "season")
+	episode := positiveIntParam(r, "episode")
 
 	var requestedAudioTags []string
 	if audioParam != "" {
@@ -352,8 +380,15 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 		}
 	}
 
+	// accept a full imdb link too, and compare IDs exactly (tt1234567 != tt12345678)
+	if id := reIMDbIDInLink.FindString(imdbParam); id != "" {
+		imdbParam = id
+	} else if id := reIMDbIDInLink.FindString("tt" + imdbParam); id != "" {
+		imdbParam = id // bare digits: 0903747
+	}
+
 	// If no filters are active, return original list
-	if len(requestedAudioTags) == 0 && yearParam == "" && imdbParam == "" {
+	if len(requestedAudioTags) == 0 && yearParam == "" && imdbParam == "" && season == 0 && episode == 0 {
 		return torrents
 	}
 
@@ -381,11 +416,128 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 
 		// Filter by IMDB ID
 		if imdbParam != "" {
-			if !strings.Contains(it.IMDB, imdbParam) {
+			if reIMDbIDInLink.FindString(strings.ToLower(it.IMDB)) != imdbParam {
+				return false
+			}
+		}
+
+		// Filter by season / episode
+		if season > 0 || episode > 0 {
+			info := parseReleaseInfo(it.Title)
+			if info.empty() {
+				info = parseReleaseInfo(it.OriginalTitle)
+			}
+			if !info.matches(season, episode) {
 				return false
 			}
 		}
 
 		return true
 	})
+}
+
+// positiveIntParam reads a query param that must be a positive integer; 0 means absent or invalid.
+func positiveIntParam(r *http.Request, name string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get(name)))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+var (
+	// S04E10, S04E08-E10, S01E01-03
+	reReleaseEpisode = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})(?: ?- ?e?(\d{1,3})\b)?`)
+	// S01-S05, S01 a S05
+	reReleaseSeasonRange = regexp.MustCompile(`\bs(\d{1,2}) ?(?:-|a|ao|ate|to) ?s?(\d{1,2})\b`)
+	// S04
+	reReleaseSeason = regexp.MustCompile(`\bs(\d{1,2})\b`)
+	// 4ª Temporada, 4a temporada, 5 Temporada, 1ª a 5ª Temporada
+	reReleaseNthSeason = regexp.MustCompile(`\b(\d{1,2}) ?(?:ª|º|°|a|o)? ?(?:(?:-|a|ao|ate) ?(\d{1,2}) ?(?:ª|º|°|a|o)? ?)?temporadas?\b`)
+	// Temporada 4, Season 4, Seasons 1-5
+	reReleaseSeasonWord = regexp.MustCompile(`\b(?:temporadas?|seasons?) ?(\d{1,2})(?: ?(?:-|a|ao|ate|to) ?(\d{1,2}))?\b`)
+	// Todas as Temporadas, Série Completa, Complete Series
+	reReleaseAllSeasons = regexp.MustCompile(`\btodas (?:as )?temporadas\b|\bserie completa\b|\bcomplete series\b`)
+)
+
+type releaseEpisodeRange struct{ season, from, to int }
+
+// releaseInfo is the season/episode coverage a release title announces.
+type releaseInfo struct {
+	seasons  [][2]int // inclusive ranges
+	episodes []releaseEpisodeRange
+	all      bool
+}
+
+func parseReleaseInfo(title string) releaseInfo {
+	s := accentReplacer.Replace(strings.ToLower(title))
+	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	s = reWhitespace.ReplaceAllString(s, " ")
+
+	var info releaseInfo
+	addSeasons := func(from, to string) {
+		a, _ := strconv.Atoi(from)
+		b, err := strconv.Atoi(to)
+		if err != nil || b < a {
+			b = a
+		}
+		if a > 0 {
+			info.seasons = append(info.seasons, [2]int{a, b})
+		}
+	}
+	for _, m := range reReleaseEpisode.FindAllStringSubmatch(s, -1) {
+		season, _ := strconv.Atoi(m[1])
+		from, _ := strconv.Atoi(m[2])
+		to, err := strconv.Atoi(m[3])
+		if err != nil || to < from {
+			to = from
+		}
+		info.episodes = append(info.episodes, releaseEpisodeRange{season, from, to})
+	}
+	for _, re := range []*regexp.Regexp{reReleaseSeasonRange, reReleaseNthSeason, reReleaseSeasonWord} {
+		for _, m := range re.FindAllStringSubmatch(s, -1) {
+			addSeasons(m[1], m[2])
+		}
+	}
+	for _, m := range reReleaseSeason.FindAllStringSubmatch(s, -1) {
+		addSeasons(m[1], "")
+	}
+	info.all = reReleaseAllSeasons.MatchString(s)
+	return info
+}
+
+func (ri releaseInfo) empty() bool {
+	return len(ri.seasons) == 0 && len(ri.episodes) == 0 && !ri.all
+}
+
+func (ri releaseInfo) hasSeason(n int) bool {
+	if ri.all {
+		return true
+	}
+	for _, r := range ri.seasons {
+		if r[0] <= n && n <= r[1] {
+			return true
+		}
+	}
+	for _, e := range ri.episodes {
+		if e.season == n {
+			return true
+		}
+	}
+	return false
+}
+
+// matches reports whether the release holds season (0 = any) and episode (0 = any).
+// A season pack holds every episode of its seasons; without a season, only
+// explicit episodes (S01E10) can match an episode.
+func (ri releaseInfo) matches(season, episode int) bool {
+	if episode == 0 {
+		return ri.hasSeason(season)
+	}
+	for _, e := range ri.episodes {
+		if (season == 0 || e.season == season) && e.from <= episode && episode <= e.to {
+			return true
+		}
+	}
+	return season > 0 && len(ri.episodes) == 0 && ri.hasSeason(season)
 }

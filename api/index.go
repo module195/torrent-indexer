@@ -81,13 +81,16 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 	commonQueryParams := map[string]string{
 		"q":              "search query",
 		"page":           "page number",
-		"filter_results": "if results with similarity equals to zero should be filtered (true/false)",
+		"filter_results": "drop results whose title is not similar to q (true/false, default: true)",
+		"min_similarity": "similarity (0 to 1) a result needs to be kept when filter_results is on (default: 0.35)",
 		"limit":          "maximum number of results to return",
 		"sortBy":         "sort by field (title, original_title, year, date, seed_count, leech_count, size, similarity)",
 		"sortDirection":  "sort direction (asc or desc, default: desc)",
 		"audio":          "filter by audio languages (comma separated, e.g. por,eng,brazilian)",
 		"year":           "filter by year (e.g. 2020)",
 		"imdb":           "filter by imdb ID (e.g. tt1234567) - this ONLY FILTERTS results, for searching by IMDB ID use the \"q\" parameter",
+		"season":         "filter by season (e.g. 4): keeps S04, S04E10, 4ª Temporada, 1ª a 5ª Temporada, Todas as Temporadas",
+		"episode":        "filter by episode (e.g. 10): with season, keeps S04E10, S04E08-E10 and season 4 packs; alone, only explicit episodes",
 	}
 
 	// Define structs for ordered JSON output
@@ -157,8 +160,17 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 					Method:      "GET",
 					Description: "Search for cached torrents across all indexers",
 					QueryParams: map[string]string{
-						"q":     "search query",
-						"limit": "maximum number of results to return (default: 10)",
+						"q":              "search query",
+						"limit":          "maximum number of results to return (default: 10)",
+						"filter_results": commonQueryParams["filter_results"],
+						"min_similarity": commonQueryParams["min_similarity"],
+						"sortBy":         commonQueryParams["sortBy"],
+						"sortDirection":  commonQueryParams["sortDirection"],
+						"audio":          commonQueryParams["audio"],
+						"year":           commonQueryParams["year"],
+						"imdb":           commonQueryParams["imdb"],
+						"season":         commonQueryParams["season"],
+						"episode":        commonQueryParams["episode"],
 					},
 				},
 			},
