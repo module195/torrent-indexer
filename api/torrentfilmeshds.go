@@ -33,9 +33,15 @@ var tfhdsSF singleflight.Group
 
 // Cache de resultado por query (TTL curto, complementa o cache de documentos do Redis)
 const tfhdsResultCacheTTL = 5 * time.Minute
+
+// Tempo máximo de uma busca compartilhada via singleflight
+const tfhdsFetchTimeout = 2 * time.Minute
+
+var imdbQueryRegex = regexp.MustCompile(`^tt\d{7,8}$`)
+
 // isIMDBQuery checks if the query is an IMDB ID (e.g. "tt1234567")
 func isIMDBQuery(q string) bool {
-	return regexp.MustCompile(`^tt\d{7,8}$`).MatchString(strings.TrimSpace(q))
+	return imdbQueryRegex.MatchString(strings.TrimSpace(q))
 }
 func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -57,30 +63,57 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Chave de cache/singleflight: query + página
-	cacheKey := fmt.Sprintf("tfhds:result:%s:%s", q, page)
+	// Chave de cache/singleflight: query + página.
+	// O cache guarda o resultado BRUTO (antes dos post-processors), pois os
+	// post-processors dependem de parâmetros do request que não estão na chave.
+	cacheKey := fmt.Sprintf("tfhds:raw:%s:%s", q, page)
+
+	cacheStatus := "MISS"
 
 	// 1. Tenta cache de resultado (Redis)
-	if cached, err := i.redis.Get(ctx, cacheKey); err == nil && len(cached) > 0 {
+	raw, err := i.redis.Get(ctx, cacheKey)
+	if err == nil && len(raw) > 0 {
 		i.metrics.CacheHits.WithLabelValues("tfhds_result").Inc()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Cache", "HIT")
-		_, _ = w.Write(cached)
-		return
-	}
-	i.metrics.CacheMisses.WithLabelValues("tfhds_result").Inc()
+		cacheStatus = "HIT"
+	} else {
+		i.metrics.CacheMisses.WithLabelValues("tfhds_result").Inc()
 
-	// 2. Singleflight: só uma execução por cacheKey concorrente
-	v, err, shared := tfhdsSF.Do(cacheKey, func() (interface{}, error) {
-		return i.fetchTorrentFilmesHDs(ctx, q, page)
-	})
-	if err != nil {
-		logging.Error().Err(err).Str("q", q).Msg("Failed to fetch torrentfilmeshds")
+		// 2. Singleflight: só uma execução por cacheKey concorrente.
+		// O contexto não é cancelado se o primeiro cliente desconectar, para não
+		// derrubar os demais requests que compartilham o resultado.
+		v, err, shared := tfhdsSF.Do(cacheKey, func() (interface{}, error) {
+			fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tfhdsFetchTimeout)
+			defer cancel()
+			resp, err := i.fetchTorrentFilmesHDs(fetchCtx, q, page)
+			if err != nil {
+				return nil, err
+			}
+			body, err := json.Marshal(resp)
+			if err != nil {
+				return nil, err
+			}
+			_ = i.redis.SetWithExpiration(fetchCtx, cacheKey, body, tfhdsResultCacheTTL)
+			return body, nil
+		})
+		if err != nil {
+			logging.Error().Err(err).Str("q", q).Msg("Failed to fetch torrentfilmeshds")
+			http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+			return
+		}
+		raw = v.([]byte)
+		if shared {
+			cacheStatus = "SHARED"
+		}
+	}
+
+	// cada request decodifica sua própria cópia, evitando data race entre
+	// post-processors de requests que compartilharam o singleflight
+	var resp Response
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		logging.Error().Err(err).Str("q", q).Msg("Failed to decode torrentfilmeshds result")
 		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
 		return
 	}
-
-	resp := v.(Response)
 
 	// Aplica post-processors no handler, onde o *http.Request existe
 	torrents := resp.Results
@@ -90,18 +123,14 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	resp.Results = torrents
 	resp.Count = len(torrents)
 
-	// 3. Serializa e cacheia o resultado
 	body, err := json.Marshal(resp)
-	if err == nil {
-		_ = i.redis.Set(ctx, cacheKey, body)
+	if err != nil {
+		http.Error(w, "Failed to encode results", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if shared {
-		w.Header().Set("X-Cache", "SHARED")
-	} else {
-		w.Header().Set("X-Cache", "MISS")
-	}
+	w.Header().Set("X-Cache", cacheStatus)
 	_, _ = w.Write(body)
 }
 
