@@ -537,3 +537,14 @@ func Test_sizeNearMagnet(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func Test_buildSmartFallbackQueriesDoesNotTruncateTitle(t *testing.T) {
+	got := buildSmartFallbackQueries("Outlander: Blood of My Blood")
+	if len(got) != 0 {
+		t.Fatalf("expected no fallback for a plain title, got %v", got)
+	}
+	got = buildSmartFallbackQueries("Outlander: Blood of My Blood S02E07")
+	if len(got) != 1 || got[0] != "Outlander: Blood of My Blood" {
+		t.Fatalf("expected only the episode marker removed, got %v", got)
+	}
+}

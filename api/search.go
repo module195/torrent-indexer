@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/schema"
 	meilisearch "github.com/module195/torrent-indexer/search"
 )
@@ -327,6 +328,7 @@ func (h *MeilisearchHandler) StatsHandler(w http.ResponseWriter, r *http.Request
 
 	stats, err := h.Module.GetStats()
 	if err != nil {
+		logging.Error().Err(err).Msg("Failed to retrieve Meilisearch stats")
 		if !h.Module.IsHealthy() {
 			http.Error(w, "Meilisearch service is unavailable", http.StatusServiceUnavailable)
 			return
