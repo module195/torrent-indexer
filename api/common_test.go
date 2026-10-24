@@ -2,6 +2,7 @@ package handler
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -477,5 +478,15 @@ func Test_appendAudioISO639_2Code_idempotent(t *testing.T) {
 	once := appendAudioISO639_2Code("Filme 2023", a)
 	if twice := appendAudioISO639_2Code(once, a); twice != once {
 		t.Errorf("appendAudioISO639_2Code() twice = %q, want %q", twice, once)
+	}
+}
+
+func Test_buildRedeTorrentFallbackQueriesSkipsArticles(t *testing.T) {
+	for _, q := range []string{"the boys", "the last of us", "o poderoso chefao"} {
+		for _, fb := range buildRedeTorrentFallbackQueries(q) {
+			if len(strings.Fields(fb)) == 1 && reLeadingArticle.MatchString(fb+" ") {
+				t.Errorf("fallback for %q searches the article alone: %q", q, fb)
+			}
+		}
 	}
 }

@@ -474,10 +474,16 @@ func buildRedeTorrentFallbackQueries(q string) []string {
 		add(cleaned)
 	}
 
-	// Primeira palavra
+	// Primeira palavra (pula artigos: buscar "the" ou "o" sozinho traz o site inteiro)
 	parts := strings.Fields(q)
 	if len(parts) > 1 {
-		add(parts[0])
+		first := parts[0]
+		if reLeadingArticle.MatchString(first+" ") && len(parts) > 2 {
+			first = parts[1]
+		}
+		if !reLeadingArticle.MatchString(first + " ") {
+			add(first)
+		}
 	}
 
 	// Duas primeiras palavras
