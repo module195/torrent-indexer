@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/module195/torrent-indexer/cache"
@@ -27,7 +28,7 @@ var trackersListURLs = []string{
 // fetchDynamicTrackers fetches the latest tracker list from GitHub and caches it
 func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error) {
 	// Try to get from cache first
-	cachedTrackers, err := r.Get(ctx, trackersListCacheKey)
+	cachedTrackers, err := r.Get(ctx, cache.Key(cache.KindMeta, trackersListCacheKey, trackersListCacheKey))
 	if err == nil {
 		var trackers []string
 		err = json.Unmarshal(cachedTrackers, &trackers)
@@ -86,7 +87,7 @@ func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error)
 		// Cache the result
 		trackersJSON, err := json.Marshal(trackers)
 		if err == nil {
-			err = r.SetWithExpiration(ctx, trackersListCacheKey, trackersJSON, trackersListCacheExpiration)
+			err = r.SetWithExpiration(ctx, cache.Key(cache.KindMeta, trackersListCacheKey, trackersListCacheKey), trackersJSON, trackersListCacheExpiration)
 			if err != nil {
 				logging.Error().Err(err).Msg("Failed to cache dynamic trackers")
 			} else {
@@ -102,12 +103,34 @@ func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error)
 	return nil, lastErr
 }
 
+// in-memory copy of the dynamic list, so each infohash doesn't hit Redis and
+// re-decode the JSON list
+const trackersMemoryTTL = 10 * time.Minute
+
+var (
+	trackersMemMu      sync.Mutex
+	trackersMem        []string
+	trackersMemExpires time.Time
+)
+
 // getAdditionalTrackers returns dynamic trackers with fallback to static ones
 func getAdditionalTrackers(ctx context.Context, r *cache.Redis) []string {
+	trackersMemMu.Lock()
+	if len(trackersMem) > 0 && time.Now().Before(trackersMemExpires) {
+		list := trackersMem
+		trackersMemMu.Unlock()
+		return list
+	}
+	trackersMemMu.Unlock()
+
 	// Try to get dynamic trackers first
 	dynamicTrackers, err := fetchDynamicTrackers(ctx, r)
 	if err == nil && len(dynamicTrackers) > 0 {
 		logging.Debug().Int("count", len(dynamicTrackers)).Msg("Using dynamic trackers")
+		trackersMemMu.Lock()
+		trackersMem = dynamicTrackers
+		trackersMemExpires = time.Now().Add(trackersMemoryTTL)
+		trackersMemMu.Unlock()
 		return dynamicTrackers
 	}
 
