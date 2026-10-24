@@ -292,3 +292,20 @@ func Test_normalizeSequelNumbers(t *testing.T) {
 		}
 	}
 }
+
+func Test_FilterByAudioAliases(t *testing.T) {
+	in := []schema.IndexedTorrent{
+		{Title: "dublado", Audio: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish}},
+		{Title: "legendado", Audio: []schema.Audio{schema.AudioEnglish}},
+	}
+	for _, v := range []string{"por", "pt-br", "PT", "brazilian", "Português"} {
+		got := FilterBy(nil, paramsReq(url.Values{"audio": {v}}), slices.Clone(in))
+		if titles := titlesOf(got); !slices.Equal(titles, []string{"dublado"}) {
+			t.Errorf("audio=%s: got %v", v, titles)
+		}
+	}
+	got := FilterBy(nil, paramsReq(url.Values{"audio": {"en"}}), slices.Clone(in))
+	if titles := titlesOf(got); !slices.Equal(titles, []string{"dublado", "legendado"}) {
+		t.Errorf("audio=en: got %v", titles)
+	}
+}

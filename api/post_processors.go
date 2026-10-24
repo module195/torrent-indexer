@@ -417,7 +417,7 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	if audioParam != "" {
 		parts := strings.Split(audioParam, ",")
 		for _, p := range parts {
-			if t := strings.TrimSpace(strings.ToLower(p)); t != "" {
+			if t := audioFilterTag(p); t != "" {
 				requestedAudioTags = append(requestedAudioTags, t)
 			}
 		}
@@ -499,6 +499,33 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 func titleFromPage(it schema.IndexedTorrent) bool {
 	t := strings.TrimSpace(stripAudioSuffix(it.Title))
 	return t == "" || t == strings.TrimSpace(stripAudioSuffix(it.OriginalTitle))
+}
+
+// audioTagAliases maps the language codes clients send to the tags results
+// carry ("brazilian", "eng"...): ISO 639-1/639-2 codes and common names.
+var audioTagAliases = map[string]string{
+	"por": "brazilian", "pt": "brazilian", "pt-br": "brazilian", "ptbr": "brazilian", "pob": "brazilian",
+	"portuguese": "brazilian", "portugues": "brazilian", "dublado": "brazilian",
+	"en": "eng", "english": "eng", "ingles": "eng",
+	"es": "spa", "spanish": "spa", "fr": "fra", "fre": "fra", "french": "fra",
+	"de": "deu", "ger": "deu", "german": "deu", "it": "ita", "italian": "ita",
+	"ja": "jpn", "japanese": "jpn", "ko": "kor", "korean": "kor",
+}
+
+// audioFilterTag turns one value of the "audio" param into the tag results
+// carry: "por", "pt-br" and "Português" all mean "brazilian".
+func audioFilterTag(v string) string {
+	t := accentReplacer.Replace(strings.TrimSpace(strings.ToLower(v)))
+	if t == "" {
+		return ""
+	}
+	if alias, ok := audioTagAliases[t]; ok {
+		return alias
+	}
+	if a := schema.GetAudioFromString(strings.TrimSpace(v)); a != nil {
+		return a.String()
+	}
+	return t
 }
 
 // positiveIntParam reads a query param that must be a positive integer; 0 means absent or invalid.
