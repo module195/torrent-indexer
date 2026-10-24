@@ -265,3 +265,30 @@ func Test_FilterByEpisodeGluedAndNamelessReleases(t *testing.T) {
 		t.Errorf("season=4&episode=5:\n got %q\nwant %q", titles, want)
 	}
 }
+
+func Test_AddSimilarityCheckKeepsSequelAndPollutedOriginalTitle(t *testing.T) {
+	in := []schema.IndexedTorrent{
+		// bludv_ru: original_title is the whole post header
+		{Title: "Duna.Parte.2.2024.1080p.WEB-DL.DUAL.5.1", OriginalTitle: "Duna: Parte Dois\n24 de outubro de 2026\nWEB-DL 1080p Dual Áudio (brazilian, eng)"},
+		// rede_torrent: release named in english, audio suffix appended
+		{Title: "Dune Part Two 2024 1080p WEBRip x264 (brazilian, eng)", OriginalTitle: "Duna - Parte Dois (brazilian, eng)"},
+		{Title: "Duna Parte 2 2024 2160p (brazilian)", OriginalTitle: "Duna Parte 2"},
+	}
+	got := AddSimilarityCheck(nil, paramsReq(url.Values{"q": {"duna parte dois"}}), slices.Clone(in))
+	if len(got) != len(in) {
+		t.Fatalf("kept %d of %d: %v", len(got), len(in), titlesOf(got))
+	}
+}
+
+func Test_normalizeSequelNumbers(t *testing.T) {
+	for in, want := range map[string]string{
+		"Duna: Parte Dois":      "duna: parte 2",
+		"Dune Part Two":         "dune part 2",
+		"Duna - Parte  Dois":    "duna parte 2",
+		"um sonho de liberdade": "um sonho de liberdade",
+	} {
+		if got := normalize(in); got != want {
+			t.Errorf("normalize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

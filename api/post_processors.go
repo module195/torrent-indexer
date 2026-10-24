@@ -165,8 +165,8 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
-		mainTitle := extractMainTitle(it.Title)
-		originalTitle := extractMainTitle(it.OriginalTitle)
+		mainTitle := extractMainTitle(stripAudioSuffix(it.Title))
+		originalTitle := extractMainTitle(cleanOriginalTitleForMatch(it.OriginalTitle))
 
 		// Normalize for matching
 		combined := normalize(mainTitle + " " + originalTitle)
@@ -264,7 +264,33 @@ func normalize(s string) string {
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	s = accentReplacer.Replace(s)
+	// "Duna - Parte" would keep three spaces and stop matching "duna parte"
+	s = reWhitespace.ReplaceAllString(s, " ")
+	s = reSequelNumberWord.ReplaceAllStringFunc(s, func(m string) string {
+		f := strings.Fields(m)
+		return f[0] + " " + sequelNumberWords[f[1]]
+	})
 	return strings.TrimSpace(s)
+}
+
+// "parte dois" and "parte 2" name the same sequel; only number words right
+// after parte/part/volume/capitulo are converted ("um sonho" stays as is).
+var (
+	sequelNumberWords = map[string]string{
+		"um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "quatro": "4", "cinco": "5",
+		"one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+	}
+	reSequelNumberWord = regexp.MustCompile(`\b(?:parte|part|volume|vol|capitulo|chapter) (?:um|uma|dois|duas|tres|quatro|cinco|one|two|three|four|five)\b`)
+)
+
+// cleanOriginalTitleForMatch keeps only the post title: some sites put the
+// whole post header (several lines with date and tags) in original_title,
+// and the audio tags the indexer appended are not part of the name.
+func cleanOriginalTitleForMatch(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	return stripAudioSuffix(strings.TrimSpace(s))
 }
 
 // extractMainTitle extracts the main title before year/quality patterns
