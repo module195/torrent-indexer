@@ -119,15 +119,27 @@ func (t *SearchIndexer) IndexTorrents(torrents []schema.IndexedTorrent) error {
 
 // SearchTorrent searches indexed torrents in Meilisearch based on the query.
 func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.IndexedTorrent, error) {
+	return t.search(query, limit, []string{"title", "original_title"})
+}
+
+// SearchTorrentByIMDB searches the imdb field (an IMDb URL such as
+// https://www.imdb.com/title/tt3581920/) for an ID like tt3581920. The ID is
+// sent as a phrase so Meilisearch applies neither typo tolerance nor prefix
+// matching; callers should still check the ID exactly.
+func (t *SearchIndexer) SearchTorrentByIMDB(imdbID string, limit int) ([]schema.IndexedTorrent, error) {
+	return t.search(`"`+imdbID+`"`, limit, []string{"imdb"})
+}
+
+func (t *SearchIndexer) search(query string, limit int, attributes []string) ([]schema.IndexedTorrent, error) {
 	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
 	if limit > 200 {
 		limit = 200
 	}
-		requestBody := map[string]interface{}{
+	requestBody := map[string]interface{}{
 		"q":                    query,
 		"limit":                limit,
 		"matchingStrategy":     "all",
-		"attributesToSearchOn": []string{"title", "original_title"},
+		"attributesToSearchOn": attributes,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
