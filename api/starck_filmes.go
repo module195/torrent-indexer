@@ -246,7 +246,9 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
     magnet, err := magnet.ParseMagnetUri(magnetLink)
     if err != nil {
         logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-        return // ou continue sem quebrar
+        // always send so the collector loop below doesn't block forever
+        chanIndexedTorrent <- schema.IndexedTorrent{}
+        return
     }
 			releaseTitle := strings.TrimSpace(magnet.DisplayName)
 			// url decode the title
@@ -305,7 +307,9 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
 
 	for i := 0; i < len(magnetLinks); i++ {
 		it := <-chanIndexedTorrent
-		indexedTorrents = append(indexedTorrents, it)
+		if it.InfoHash != "" {
+			indexedTorrents = append(indexedTorrents, it)
+		}
 	}
 
 	return indexedTorrents, nil
