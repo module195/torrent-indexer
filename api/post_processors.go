@@ -321,10 +321,14 @@ func torrentComparator(params url.Values) func(i, j schema.IndexedTorrent) int {
 			return 0
 		}
 
-		if ascending {
-			return cmp
+		if !ascending {
+			cmp = -cmp
 		}
-		return -cmp
+		if cmp == 0 && sortBy != "seed_count" && sortBy != "seeders" {
+			// ties go to the torrent with more seeds, whatever the direction
+			cmp = j.SeedCount - i.SeedCount
+		}
+		return cmp
 	}
 }
 
