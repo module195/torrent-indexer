@@ -490,3 +490,19 @@ func Test_buildRedeTorrentFallbackQueriesSkipsArticles(t *testing.T) {
 		}
 	}
 }
+
+func Test_cleanReleaseTitle_tagPrefix(t *testing.T) {
+	cases := map[string]string{
+		"BAIXARAPIDO.COM-.WEB-DL.2160P.SEM-COMPACTAÇÃO.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Homem-Aranha - Um Novo Dia 2026 WEB-DL 2160p x265 DV HDR10 DUAL 5.1": "Homem Aranha Um Novo Dia 2026 WEB-DL 2160p x265 DV HDR10 DUAL 5 1",
+		"BAIXARAPIDO.COM-.WEB-DL.1080P.SEM-COMPACTAÇÃO.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Homem-Aranha - Um Novo Dia 2026 WEB-DL 1080p x264 FULLHD DUAL 5.1":   "Homem Aranha Um Novo Dia 2026 WEB-DL 1080p x264 FULLHD DUAL 5 1",
+		"BAIXARAPIDO.COM-.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Homem-Aranha - Um Novo Dia 2026 WEB-DL 1080p x264 DUAL 5.1":                          "Homem Aranha Um Novo Dia 2026 WEB-DL 1080p x264 DUAL 5 1",
+	}
+	for in, want := range cases {
+		if got := cleanRedeTorrentTitle(in); got != want {
+			t.Errorf("cleanRedeTorrentTitle(%q) = %q, want %q", in, got, want)
+		}
+		if got := cleanBaixarApidoTitle(in); got != want {
+			t.Errorf("cleanBaixarApidoTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

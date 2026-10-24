@@ -523,14 +523,7 @@ func cleanRedeTorrentTitle(raw string) string {
 	s = regexp.MustCompile(`(?i)^[-.\s]*E[\s.-]*\d+[\s.-]*`).ReplaceAllString(s, "")
 
 	// Remove tags de qualidade/áudio no início (múltiplas passadas)
-	qualityPrefix := `(?i)^[-.\s]*(WEB[\s-]?DL|WEB[\s-]?RIP|1080P|720P|4K|2160P|MKV|MP4|X264|X265|HEVC|5[\s.]?1|DUBLADO|DUAL[\s-]?AUDIO|LEGENDADO|AAC|AC3|DTS|H264|H265)\s*[-.\s]*`
-	for i := 0; i < 8; i++ {
-		prev := s
-		s = regexp.MustCompile(qualityPrefix).ReplaceAllString(s, "")
-		if s == prev {
-			break
-		}
-	}
+	s = stripReleaseTagPrefix(s)
 
 	// Preserva tags com hífen no meio do título
 	knownHyphen := []string{"WEB-DL", "WEB-RIP", "BD-RIP", "DUAL-AUDIO", "CAM-RIP"}
