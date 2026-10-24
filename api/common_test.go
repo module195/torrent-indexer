@@ -279,6 +279,48 @@ func Test_getAudioFromTitle(t *testing.T) {
 			audioFromContent: []schema.Audio{schema.AudioFrench},
 			want:             []schema.Audio{schema.AudioPortuguese, schema.AudioFrench},
 		},
+		{
+			name:             "legendado drops the page's portuguese",
+			releaseTitle:     "SITEDETORRENTS.COM..MKV.-LEGENDADO-..Oppenheimer.2023.720p.BluRay.999MB.x264-GalaxyRG[TGx]",
+			audioFromContent: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioEnglish},
+		},
+		{
+			name:             "legendado without other audio falls back to english",
+			releaseTitle:     "Filme 2023 1080p Legendado",
+			audioFromContent: []schema.Audio{schema.AudioPortuguese},
+			want:             []schema.Audio{schema.AudioEnglish},
+		},
+		{
+			name:             "nacional is portuguese only",
+			releaseTitle:     "Ainda.Estou.Aqui.2024.1080p.WEB-DL.NACIONAL",
+			audioFromContent: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioPortuguese},
+		},
+		{
+			name:             "named foreign language without portuguese marker",
+			releaseTitle:     "Squid.Game.S02.KOREAN.1080p.NF.WEB-DL",
+			audioFromContent: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioEnglish, schema.AudioKorean},
+		},
+		{
+			name:             "dual keeps the page audio and adds portuguese",
+			releaseTitle:     "The.Boys.S04E05.1080p.WEB-DL.DUAL",
+			audioFromContent: []schema.Audio{schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+		},
+		{
+			name:             "own audio suffix is not a marker",
+			releaseTitle:     "Oppenheimer 2023 1080p BluRay x264 GalaxyRG (brazilian, eng)",
+			audioFromContent: []schema.Audio{schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioEnglish},
+		},
+		{
+			name:             "no markers keeps the page audio",
+			releaseTitle:     "Oppenheimer.2023.1080p.BluRay.x264-GalaxyRG",
+			audioFromContent: []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+			want:             []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

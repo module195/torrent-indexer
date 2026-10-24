@@ -244,6 +244,7 @@ func getIMDBLink(link string) (string, error) {
 // Example: "Movie Title (eng, por)"
 func appendAudioISO639_2Code(title string, a []schema.Audio) string {
 	if len(a) > 0 {
+		title = stripAudioSuffix(title)
 		audio := []string{}
 		for _, lang := range a {
 			audio = append(audio, lang.String())
@@ -271,30 +272,71 @@ func normalizeForMatch(s string) string {
 	return s
 }
 
+// reAudioSuffix matches the "(brazilian, eng)" suffix appendAudioISO639_2Code adds.
+var reAudioSuffix = regexp.MustCompile(`\s*\((?:[a-z]{3}|brazilian)(?:, ?(?:[a-z]{3}|brazilian))*\)\s*$`)
+
+// stripAudioSuffix removes the audio tags appended by appendAudioISO639_2Code,
+// so a title can be tagged again without counting its own tags as markers.
+func stripAudioSuffix(title string) string {
+	return reAudioSuffix.ReplaceAllString(title, "")
+}
+
+var reNonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)
+
+// Release-name words that name an audio track. Keys are whole words of the
+// normalized title (lowercase, no accents, punctuation turned into spaces).
+var (
+	ptAudioMarkers  = []string{"dual", "dublado", "dub", "multi", "nacional", "pt", "ptbr", "brazilian", "portugues", "portuguese"}
+	subtitleMarkers = []string{"legendado", "leg", "legenda", "legendas"}
+	otherAudioWords = map[string]schema.Audio{
+		"eng": schema.AudioEnglish, "english": schema.AudioEnglish, "ingles": schema.AudioEnglish,
+		"ita": schema.AudioItalian, "italian": schema.AudioItalian, "italiano": schema.AudioItalian,
+		"kor": schema.AudioKorean, "korean": schema.AudioKorean, "coreano": schema.AudioKorean,
+		"jap": schema.AudioJapanese, "japanese": schema.AudioJapanese, "japones": schema.AudioJapanese,
+		"spa": schema.AudioSpanish, "spanish": schema.AudioSpanish, "espanhol": schema.AudioSpanish,
+		"fre": schema.AudioFrench, "french": schema.AudioFrench, "frances": schema.AudioFrench,
+	}
+)
+
 // getAudioFromTitle extracts audio languages from the release title.
-// Mantém o áudio do conteúdo e complementa com hints do título.
-// Não remove Português quando há múltiplos idiomas.
+// The audio found on the page (audioFromContent) describes the whole post, and a
+// post often lists dubbed and subtitled releases together, so markers in the
+// release name win over it:
+//   - NACIONAL: Portuguese only (Brazilian production);
+//   - DUAL, DUBLADO, PT-BR...: Portuguese plus the page audio;
+//   - LEGENDADO or a named foreign language (KOREAN, ITA ENG) without a
+//     Portuguese marker: the page's Portuguese is dropped.
+//
+// Without markers, the page audio is kept as is.
 func getAudioFromTitle(releaseTitle string, audioFromContent []schema.Audio) []schema.Audio {
-	titleNorm := normalizeForMatch(releaseTitle)
+	words := " " + strings.TrimSpace(reNonAlphanumeric.ReplaceAllString(normalizeForMatch(stripAudioSuffix(releaseTitle)), " ")) + " "
+	has := func(markers ...string) bool {
+		for _, m := range markers {
+			if strings.Contains(words, " "+m+" ") {
+				return true
+			}
+		}
+		return false
+	}
+	var named []schema.Audio
+	for w, a := range otherAudioWords {
+		if strings.Contains(words, " "+w+" ") {
+			named = append(named, a)
+		}
+	}
+	isPT := func(a schema.Audio) bool { return a.String() == schema.Audio(schema.AudioPortuguese).String() }
+
 	magnetAudio := append([]schema.Audio{}, audioFromContent...)
-
-	// Título com "nacional" → força Português
-	if strings.Contains(titleNorm, "nacional") {
-		if !slices.Contains(magnetAudio, schema.AudioPortuguese) {
-			magnetAudio = append(magnetAudio, schema.AudioPortuguese)
-		}
-	}
-
-	// Título com "dual" ou "dublado" → força Português se ainda não tiver
-	if strings.Contains(titleNorm, "dual") || strings.Contains(titleNorm, "dublado") {
-		if !slices.Contains(magnetAudio, schema.AudioPortuguese) {
-			magnetAudio = append(magnetAudio, schema.AudioPortuguese)
-		}
-	}
-
-	// Título com "legendado" → adiciona Inglês se ainda não tiver
-	if strings.Contains(titleNorm, "legendado") || strings.Contains(titleNorm, "legenda") {
-		if !slices.Contains(magnetAudio, schema.AudioEnglish) {
+	switch {
+	case has("nacional"):
+		magnetAudio = []schema.Audio{schema.AudioPortuguese}
+	case has(ptAudioMarkers...):
+		magnetAudio = append(magnetAudio, schema.AudioPortuguese)
+		magnetAudio = append(magnetAudio, named...)
+	case has(subtitleMarkers...) || len(named) > 0:
+		magnetAudio = slices.DeleteFunc(magnetAudio, isPT)
+		magnetAudio = append(magnetAudio, named...)
+		if len(magnetAudio) == 0 {
 			magnetAudio = append(magnetAudio, schema.AudioEnglish)
 		}
 	}
