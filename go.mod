@@ -1,6 +1,8 @@
 module github.com/module195/torrent-indexer
 
-go 1.25.0
+go 1.24.1
+
+toolchain go1.24.5
 
 require github.com/redis/go-redis/v9 v9.11.0
 
@@ -19,8 +21,8 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect
 	github.com/prometheus/procfs v0.17.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/net v0.42.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )
 
