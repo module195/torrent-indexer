@@ -232,6 +232,20 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		return torrents
 	}
 	q := r.URL.Query().Get("q")
+	if id := strings.ToLower(strings.TrimSpace(q)); reIMDbID.MatchString(id) {
+		// An IMDb ID has no text to compare titles with: score by the ID
+		// itself, so these results don't sink to the bottom of a merged
+		// list (/indexers/multi) and get cut first by limit.
+		for i, it := range torrents {
+			if reIMDbIDInLink.FindString(strings.ToLower(it.IMDB)) == id {
+				torrents[i].Similarity = 1
+			} else {
+				torrents[i].Similarity = 0
+			}
+		}
+		sortBySimilarity(torrents)
+		return torrents
+	}
 	qNorm := normalize(q)
 
 	// Extract episode info from query (e.g. s01e05)
@@ -275,9 +289,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	}
 
 	// Filter low similarity, unless filter_results=false
-	// Skip filter for IMDB queries (tt1234567) — no semantic similarity
-	imdbPattern := reIMDbID
-	if q != "" && !imdbPattern.MatchString(strings.ToLower(q)) && filterResults(r) {
+	if q != "" && filterResults(r) {
 		threshold := defaultMinSimilarity
 		if qEpisode != "" {
 			// Query has episode: require either boost (0.5) or high base similarity
@@ -298,12 +310,14 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		})
 	}
 
-	// sort by similarity
+	sortBySimilarity(torrents)
+	return torrents
+}
+
+func sortBySimilarity(torrents []schema.IndexedTorrent) {
 	slices.SortFunc(torrents, func(i, j schema.IndexedTorrent) int {
 		return int((j.Similarity - i.Similarity) * 1000)
 	})
-
-	return torrents
 }
 
 // defaultMinSimilarity drops what the sites' full-text search adds around the
