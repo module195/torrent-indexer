@@ -19,7 +19,7 @@ import (
 
 // Precompiled regexes shared by hot paths (compiled once, safe for concurrent use).
 var (
-	reAudioField      = regexp.MustCompile(`(?i)(?:áudio|idioma|languages):\s*([A-Za-zÀ-ú,\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|legenda|$))`)
+	reAudioField      = regexp.MustCompile(`(?i)(?:[áa]udio|idioma|languages):\s*([A-Za-zÀ-ú,|/\s]+?)(?:\s*(?:tamanho|qualidade|duração|formato|legenda|$))`)
 	reStartsWithDigit = regexp.MustCompile(`^\d`)
 	reYearField       = regexp.MustCompile(`(?:Lançamento|Year): (.*)`)
 	reFourDigits      = regexp.MustCompile(`\b(\d{4})\b`)
