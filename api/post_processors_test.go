@@ -359,3 +359,31 @@ func Test_zeroDateOmitted(t *testing.T) {
 		t.Errorf("zero date serialized: %s", b)
 	}
 }
+
+func Test_splitGluedRelease(t *testing.T) {
+	cases := map[string]string{
+		"-TedLassoS01E01-05720p":                 "Ted.Lasso.S01E01-E05.720p",
+		"-TedLassoS01E06-071080pDUAL":            "Ted.Lasso.S01E06-E07.1080pDUAL",
+		"-TedLassoS01E091080pDUAL":               "Ted.Lasso.S01E09.1080pDUAL",
+		"TedLassoS03E111080pWEB-DLDUAL5.1":       "Ted.Lasso.S03E11.1080pWEB-DLDUAL5.1",
+		"TedLassoS04E07WEB-DL1080px264DUAL5.1":   "Ted.Lasso.S04E07.WEB-DL1080px264DUAL5.1",
+		"Ted.Lasso.S04E04.1080p.WEB-DL.DUAL.5.1": "Ted.Lasso.S04E04.1080p.WEB-DL.DUAL.5.1",
+		"The.Boys.S04E08-E10.1080p":              "The.Boys.S04E08-E10.1080p",
+		"Ted Lasso 4ª Temporada (2026)":          "Ted Lasso 4ª Temporada (2026)",
+		"Duna Parte Dois 2024 1080p":             "Duna Parte Dois 2024 1080p",
+	}
+	for in, want := range cases {
+		if got := splitGluedRelease(in); got != want {
+			t.Errorf("splitGluedRelease(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for in, want := range map[string][2]int{
+		"Ted.Lasso.S01E01-E05.720p": {1, 5},
+		"Ted.Lasso.S03E11.1080pWEB": {11, 11},
+	} {
+		e := parseReleaseInfo(in).episodes
+		if len(e) != 1 || e[0].from != want[0] || e[0].to != want[1] {
+			t.Errorf("parseReleaseInfo(%q) = %+v", in, e)
+		}
+	}
+}

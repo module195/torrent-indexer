@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -370,19 +371,22 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		linkPHPURLs = append(linkPHPURLs, fullURL)
 	})
 
+	// resolvidos em paralelo, mas na ordem da página (o tamanho é casado por posição)
 	var magnetLinks []string
 	if len(linkPHPURLs) > 0 {
-		type magResult struct{ mag string }
-		ch := make(chan magResult, len(linkPHPURLs))
-		for _, u := range linkPHPURLs {
-			u := u
+		resolved := make([]string, len(linkPHPURLs))
+		var wg sync.WaitGroup
+		for idx, u := range linkPHPURLs {
+			wg.Add(1)
 			go func() {
-				ch <- magResult{mag: resolveLinkPHP(ctx, i, u)}
+				defer wg.Done()
+				resolved[idx] = resolveLinkPHP(ctx, i, u)
 			}()
 		}
-		for range linkPHPURLs {
-			if r := <-ch; r.mag != "" {
-				magnetLinks = append(magnetLinks, r.mag)
+		wg.Wait()
+		for _, mag := range resolved {
+			if mag != "" {
+				magnetLinks = append(magnetLinks, mag)
 			}
 		}
 	}
