@@ -10,19 +10,53 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hbollon/go-edlib"
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/schema"
 	"github.com/module195/torrent-indexer/utils"
-	"github.com/hbollon/go-edlib"
 )
 
 // CleanupTitleWebsites removes unwanted characters from the title
 func CleanupTitleWebsites(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	for i := range torrents {
-		torrents[i].Title = utils.RemoveKnownWebsites(html.UnescapeString(torrents[i].Title))
+		torrents[i].Title = splitGluedRelease(utils.RemoveKnownWebsites(html.UnescapeString(torrents[i].Title)))
 		torrents[i].OriginalTitle = html.UnescapeString(torrents[i].OriginalTitle)
 	}
 	return torrents
+}
+
+var (
+	// "TedLassoS01E01": the episode marker glued to the name
+	reGluedMarkerBefore = regexp.MustCompile(`([A-Za-z])(S\d{2}E\d{2})`)
+	// "S01E01-05720p", "S01E111080p", "S04E07WEB-DL": the range end, the
+	// resolution or the next tag glued after the two-digit episode
+	reGluedMarkerAfter = regexp.MustCompile(`(S\d{2}E\d{2})(?:-E?(\d{2}))?(\d{3,4}p|[A-Za-z])`)
+	// "TedLasso": a lowercase letter followed by an uppercase one
+	reCamelCase   = regexp.MustCompile(`([a-z])([A-Z])`)
+	reGluedMarker = regexp.MustCompile(`S\d{2}E\d{2}`)
+)
+
+// splitGluedRelease puts separators back in release names published without
+// them, such as "COMANDO.TO-TedLassoS01E01-05720p". Glued, "E01-05720p" reads
+// as episodes 1 to 57 and "E111080p" as episode 111.
+func splitGluedRelease(title string) string {
+	title = strings.TrimLeft(title, "-._ ")
+	loc := reGluedMarker.FindStringIndex(title)
+	if loc == nil {
+		return title
+	}
+	if name := title[:loc[0]]; !strings.ContainsAny(name, " ._-") {
+		title = reCamelCase.ReplaceAllString(name, "$1.$2") + title[loc[0]:]
+	}
+	title = reGluedMarkerBefore.ReplaceAllString(title, "$1.$2")
+	return reGluedMarkerAfter.ReplaceAllStringFunc(title, func(m string) string {
+		sm := reGluedMarkerAfter.FindStringSubmatch(m)
+		out := sm[1]
+		if sm[2] != "" {
+			out += "-E" + sm[2]
+		}
+		return out + "." + sm[3]
+	})
 }
 
 // PropagateIMDB fills the empty IMDb link of a result with the link of other
