@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -140,6 +143,71 @@ func Test_buildTorrentFilmesHDsRelease_pages(t *testing.T) {
 			if got[k] != c.want[k] {
 				t.Errorf("%s #%d = %+v, want %+v", c.page, k, got[k], c.want[k])
 			}
+		}
+	}
+}
+
+func Test_yearFits(t *testing.T) {
+	cases := []struct {
+		omdb   string
+		y      int
+		series bool
+		want   bool
+	}{
+		{"2016", 2026, false, false}, // Moana (2016) não é Moana (2026)
+		{"2026", 2026, false, true},
+		{"2025", 2026, false, true},
+		{"2021–", 2026, true, true},
+		{"2021–2023", 2026, true, false},
+		{"2027–", 2026, true, false},
+		{"N/A", 2026, false, false},
+	}
+	for _, c := range cases {
+		if got := yearFits(c.omdb, c.y, c.series); got != c.want {
+			t.Errorf("yearFits(%q, %d, %v) = %v, want %v", c.omdb, c.y, c.series, got, c.want)
+		}
+	}
+}
+
+func Test_lookupIMDBByTitleAndYear(t *testing.T) {
+	omdb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("t") {
+		case "Moana": // sem y= o OMDb devolve a animação de 2016
+			if r.URL.Query().Get("y") == "2026" {
+				_, _ = w.Write([]byte(`{"Title":"Moana","Year":"2026","imdbID":"tt22022452"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"Title":"Moana","Year":"2016","imdbID":"tt3521164"}`))
+		case "Lupin":
+			_, _ = w.Write([]byte(`{"Title":"Lupin","Year":"2021–","imdbID":"tt2531336"}`))
+		case "Interestelar": // título em português: o OMDb acha outra coisa
+			_, _ = w.Write([]byte(`{"Title":"Interestelar: O Documentário","Year":"2014","imdbID":"tt0000001"}`))
+		default:
+			_, _ = w.Write([]byte(`{"Response":"False"}`))
+		}
+	}))
+	defer omdb.Close()
+	tvmaze := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"Outra Série","premiered":"2020-01-01","externals":{"imdb":"tt9999999"}}`))
+	}))
+	defer tvmaze.Close()
+	oldOMDb, oldTV := tfhdsOMDbURL, tfhdsTVmazeURL
+	tfhdsOMDbURL, tfhdsTVmazeURL = omdb.URL+"/", tvmaze.URL
+	defer func() { tfhdsOMDbURL, tfhdsTVmazeURL = oldOMDb, oldTV }()
+
+	cases := []struct {
+		name, year string
+		series     bool
+		want       string
+	}{
+		{"Moana", "2026", false, "https://www.imdb.com/title/tt22022452/"},
+		{"Lupin", "2026", true, "https://www.imdb.com/title/tt2531336/"},
+		{"Interestelar", "2014", false, ""},
+		{"Série Desconhecida", "2026", true, ""}, // o TVmaze responde com outro nome
+	}
+	for _, c := range cases {
+		if got := lookupIMDBByTitleAndYear(context.Background(), c.name, c.year, c.series); got != c.want {
+			t.Errorf("lookupIMDBByTitleAndYear(%q, %q, %v) = %q, want %q", c.name, c.year, c.series, got, c.want)
 		}
 	}
 }

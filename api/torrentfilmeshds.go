@@ -15,6 +15,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/magnet"
 	"github.com/module195/torrent-indexer/schema"
@@ -305,8 +306,11 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		title = strings.TrimSpace(title)
 	}
 
+	// ano entre parênteses primeiro: "Blade Runner 2049 (2017)"
 	year := ""
-	if m := regexp.MustCompile(`(\d{4})`).FindStringSubmatch(title); len(m) > 0 {
+	if m := reTfhdsYearParen.FindStringSubmatch(title); len(m) > 1 {
+		year = m[1]
+	} else if m := reTfhdsYear.FindStringSubmatch(title); len(m) > 1 {
 		year = m[1]
 	}
 
@@ -332,9 +336,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 		searchTitle = regexp.MustCompile(`(?i)\s*(torrent|download|dual|áudio|audio|dublado|legendado|brazilian)\s*`).ReplaceAllString(searchTitle, " ")
 		searchTitle = regexp.MustCompile(`\([^)]*\)`).ReplaceAllString(searchTitle, " ")
 		searchTitle = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(searchTitle), " ")
-		if fetched := fetchIMDBByTitle(searchTitle, ""); fetched != "" {
-			imdbLink = fetched
-		}
+		imdbLink = i.torrentFilmesHDsIMDB(ctx, searchTitle, year, reShowSeason.MatchString(title))
 	}
 	// Normaliza para URL completa
 	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
@@ -461,6 +463,145 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	}
 
 	return indexedTorrents, nil
+}
+
+var (
+	reTfhdsYearParen = regexp.MustCompile(`\(((?:19|20)\d{2})`)
+	reTfhdsYear      = regexp.MustCompile(`\b((?:19|20)\d{2})\b`)
+)
+
+// O site não traz mais o IMDb na página. A busca por título é cacheada (também
+// o "não achei"), porque cada consulta custa até 2 chamadas de 5 s.
+const (
+	tfhdsIMDBCacheTTL     = 7 * 24 * time.Hour
+	tfhdsIMDBMissCacheTTL = 24 * time.Hour
+)
+
+// URLs das APIs de título; variáveis para os testes.
+var (
+	tfhdsOMDbURL   = "https://www.omdbapi.com/"
+	tfhdsTVmazeURL = "https://api.tvmaze.com/singlesearch/shows"
+)
+
+// torrentFilmesHDsIMDB acha o IMDb de uma página pelo título e pelo ano. Só aceita
+// uma resposta do mesmo ano (filme) ou de uma série no ar naquele ano: na dúvida
+// devolve "", porque um ID errado faz o guindex descartar o torrent, e vazio não.
+func (i *Indexer) torrentFilmesHDsIMDB(ctx context.Context, name, year string, series bool) string {
+	if name == "" || year == "" {
+		return ""
+	}
+	key := cache.Key(cache.KindMeta, fmt.Sprintf("tfhds:imdb:%s:%s:%t", strings.ToLower(name), year, series), "")
+	if i.redis != nil {
+		if v, err := i.redis.Get(ctx, key); err == nil {
+			if string(v) == "-" {
+				return ""
+			}
+			return string(v)
+		}
+	}
+
+	link := lookupIMDBByTitleAndYear(ctx, name, year, series)
+
+	if i.redis != nil {
+		if link == "" {
+			_ = i.redis.SetWithExpiration(ctx, key, []byte("-"), tfhdsIMDBMissCacheTTL)
+		} else {
+			_ = i.redis.SetWithExpiration(ctx, key, []byte(link), tfhdsIMDBCacheTTL)
+		}
+	}
+	return link
+}
+
+// lookupIMDBByTitleAndYear consulta o OMDb (e o TVmaze, para séries) e só aceita
+// um resultado com o mesmo título e um ano compatível.
+func lookupIMDBByTitleAndYear(ctx context.Context, name, year string, series bool) string {
+	y, err := strconv.Atoi(year)
+	if err != nil {
+		return ""
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	get := func(u string, out any) bool {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(out) == nil
+	}
+
+	q := url.Values{"t": {name}, "apikey": {"trilogy"}}
+	if series {
+		q.Set("type", "series")
+	} else {
+		q.Set("type", "movie")
+		q.Set("y", year)
+	}
+	var omdb struct {
+		IMDBID string `json:"imdbID"`
+		Title  string `json:"Title"`
+		Year   string `json:"Year"`
+	}
+	if get(tfhdsOMDbURL+"?"+q.Encode(), &omdb) && omdb.IMDBID != "" &&
+		sameTitle(omdb.Title, name) && yearFits(omdb.Year, y, series) {
+		return "https://www.imdb.com/title/" + omdb.IMDBID + "/"
+	}
+
+	if series {
+		var tv struct {
+			Name      string `json:"name"`
+			Premiered string `json:"premiered"`
+			Ended     string `json:"ended"`
+			Externals struct {
+				IMDB string `json:"imdb"`
+			} `json:"externals"`
+		}
+		if get(tfhdsTVmazeURL+"?q="+url.QueryEscape(name), &tv) && tv.Externals.IMDB != "" &&
+			sameTitle(tv.Name, name) && yearFits(firstN(tv.Premiered, 4)+"–"+firstN(tv.Ended, 4), y, true) {
+			return "https://www.imdb.com/title/" + tv.Externals.IMDB + "/"
+		}
+	}
+	return ""
+}
+
+// sameTitle compara títulos sem acento, caixa e pontuação.
+func sameTitle(a, b string) bool {
+	norm := func(s string) string {
+		return strings.TrimSpace(reNonAlphanumeric.ReplaceAllString(normalizeForMatch(s), " "))
+	}
+	return norm(a) != "" && norm(a) == norm(b)
+}
+
+// yearFits diz se o ano do OMDb ("2016", "2021–", "2021–2023") serve para o ano da
+// página. Filme: mesmo ano, com 1 de folga (estreia no Brasil). Série: no ar naquele ano.
+func yearFits(omdbYear string, y int, series bool) bool {
+	parts := strings.SplitN(strings.ReplaceAll(omdbYear, "-", "–"), "–", 2)
+	start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return false
+	}
+	if !series {
+		return start >= y-1 && start <= y+1
+	}
+	if start > y {
+		return false
+	}
+	if len(parts) == 2 {
+		if end, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && end < y {
+			return false
+		}
+	}
+	return true
+}
+
+func firstN(s string, n int) string {
+	if len(s) < n {
+		return s
+	}
+	return s[:n]
 }
 
 // tfhdsRelease é o que a página diz de um magnet, antes do scrape de seeders.
