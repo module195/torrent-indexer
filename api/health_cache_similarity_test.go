@@ -143,3 +143,56 @@ func Test_responseCacheTTL(t *testing.T) {
 		t.Errorf("short TTL must not exceed the configured one: %v", ttl)
 	}
 }
+
+func Test_responseCacheTTLPerIndexer(t *testing.T) {
+	if got := ttlEnvName("torrent-dos-filmes"); got != "RESPONSE_CACHE_TTL_TORRENT_DOS_FILMES" {
+		t.Errorf("ttlEnvName: %s", got)
+	}
+	rc := &ResponseCache{ttl: 5 * time.Minute}
+	t.Setenv("RESPONSE_CACHE_TTL_BETOR", "30m")
+	t.Setenv("RESPONSE_CACHE_TTL_BLUDV_RU", "0")
+	t.Setenv("RESPONSE_CACHE_TTL_REDE_TORRENT", "nope")
+	cases := map[string]time.Duration{
+		"betor":            30 * time.Minute,
+		"bludv_ru":         0,
+		"rede_torrent":     5 * time.Minute, // invalid falls back to the global TTL
+		"comando_torrents": 5 * time.Minute,
+	}
+	for label, want := range cases {
+		if got := rc.ttlFor(label); got != want {
+			t.Errorf("ttlFor(%s) = %v, want %v", label, got, want)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	rc.Wrap("bludv_ru", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})(rec, httptest.NewRequest(http.MethodGet, "/indexers/bludv_ru?q=a", nil))
+	if rec.Header().Get("X-Cache") != "BYPASS" {
+		t.Errorf("TTL 0 should bypass the cache: %q", rec.Header().Get("X-Cache"))
+	}
+}
+
+func Test_wantsFresh(t *testing.T) {
+	cases := []struct {
+		url, cacheControl string
+		fresh             bool
+		query             string
+	}{
+		{"/indexers/x?q=a&nocache=1", "", true, "q=a"},
+		{"/indexers/x?nocache=true&q=a", "", true, "q=a"},
+		{"/indexers/x?q=a&nocache", "", true, "q=a"},
+		{"/indexers/x?q=a&nocache=0", "", false, "q=a"},
+		{"/indexers/x?q=a", "no-cache", true, "q=a"},
+		{"/indexers/x?q=a", "", false, "q=a"},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(http.MethodGet, c.url, nil)
+		if c.cacheControl != "" {
+			r.Header.Set("Cache-Control", c.cacheControl)
+		}
+		if got := wantsFresh(r); got != c.fresh || r.URL.RawQuery != c.query {
+			t.Errorf("%s: fresh=%v query=%q, want %v %q", c.url, got, r.URL.RawQuery, c.fresh, c.query)
+		}
+	}
+}
