@@ -405,7 +405,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	doc.Find("a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists && href != "" {
 			magnetLinks = append(magnetLinks, href)
-			addLabel(href, s.Text())
+			addLabel(href, torrentFilmesHDsButtonLabel(s))
 		}
 	})
 
@@ -419,101 +419,37 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
 	for it, magnetLink := range magnetLinks {
-		it := it
 		go func(it int, magnetLink string) {
-			label := labels[magnetLink]
-			magnetLink = normalizeMagnet(magnetLink)
-
-			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
-			if err != nil {
-				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+			var pageSize string
+			if len(size) == len(magnetLinks) {
+				pageSize = size[it]
+			}
+			rel, ok := buildTorrentFilmesHDsRelease(title, magnetLink, labels[magnetLink], audio, pageSize)
+			if !ok {
 				chanIndexedTorrent <- schema.IndexedTorrent{}
 				return
 			}
 
-			// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
-			releaseTitle := magnetParsed.DisplayName
-			if releaseTitle == "" {
-				// Fallback manual: extrai dn= da URL do magnet
-				if m := regexp.MustCompile(`(?i)[?&]dn=([^&]+)`).FindStringSubmatch(magnetLink); len(m) > 1 {
-					releaseTitle, _ = url.QueryUnescape(m[1])
-					releaseTitle = strings.ReplaceAll(releaseTitle, "+", " ")
-					releaseTitle = strings.TrimSpace(releaseTitle)
-				}
-			}
-			if releaseTitle == "" {
-				releaseTitle = title
-			}
-
-			// o site publica dn colado ("TedLassoS01E01-05720p"), que vira episódio errado
-			// no parser; reconstrói pelo rótulo do botão ou descarta
-			if isGluedRelease(releaseTitle) {
-				rebuilt := releaseFromButtonLabel(title, label)
-				if rebuilt == "" {
-					logging.Debug().Str("title", releaseTitle).Str("label", label).Msg("Skipping glued release without usable label")
-					chanIndexedTorrent <- schema.IndexedTorrent{}
-					return
-				}
-				releaseTitle = rebuilt
-			}
-
-			infoHash := magnetParsed.InfoHash.String()
-			trackers := magnetParsed.Trackers
-
-			magnetAudio := getAudioFromTitle(releaseTitle, audio)
-
-			// Fallback: detecta áudio pelo título se vazio
-			if len(magnetAudio) == 0 {
-				titleLower := strings.ToLower(releaseTitle)
-				// Dual = Português + Inglês
-				if strings.Contains(titleLower, "dual") {
-					magnetAudio = append(magnetAudio, "Português", "Inglês")
-				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
-					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
-					magnetAudio = append(magnetAudio, "Português")
-				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
-					strings.Contains(titleLower, "english") {
-					magnetAudio = append(magnetAudio, "Inglês")
-				}
-			}
-
-			// Title processado - usa processTitle como torrent-dos-filmes
-			titleProcessed := processTitle(title, magnetAudio)
-
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
+			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, rel.infoHash, rel.trackers)
 			if err != nil {
 				peer, seed = 0, 0
 			}
 
-			var mySize string
-			if len(size) == len(magnetLinks) {
-				mySize = size[it]
-			}
-			// Fallback: xl= do magnet (exact length em bytes)
-			if mySize == "" {
-				if xl := magnetParsed.Params.Get("xl"); xl != "" {
-					if n, err := strconv.ParseInt(xl, 10, 64); err == nil && n > 0 {
-						mySize = utils.FormatBytes(n)
-					}
-				}
-			}
-
-			ixt := schema.IndexedTorrent{
-				Title:         releaseTitle,
-				OriginalTitle: titleProcessed,
+			chanIndexedTorrent <- schema.IndexedTorrent{
+				Title:         rel.title,
+				OriginalTitle: processTitle(title, rel.audio),
 				Details:       link,
 				Year:          year,
 				IMDB:          imdbLink,
-				Audio:         magnetAudio,
-				MagnetLink:    magnetLink,
+				Audio:         rel.audio,
+				MagnetLink:    rel.magnet,
 				Date:          date,
-				InfoHash:      infoHash,
-				Trackers:      trackers,
+				InfoHash:      rel.infoHash,
+				Trackers:      rel.trackers,
 				LeechCount:    peer,
 				SeedCount:     seed,
-				Size:          mySize,
+				Size:          rel.size,
 			}
-			chanIndexedTorrent <- ixt
 		}(it, magnetLink)
 	}
 
@@ -527,6 +463,98 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	return indexedTorrents, nil
 }
 
+// tfhdsRelease é o que a página diz de um magnet, antes do scrape de seeders.
+type tfhdsRelease struct {
+	magnet   string
+	title    string
+	infoHash string
+	trackers []string
+	audio    []schema.Audio
+	size     string
+}
+
+// buildTorrentFilmesHDsRelease monta um release a partir do magnet e do rótulo do
+// seu botão ("S04.1080p | MKV | 7.49 GB | Dual Áudio"). pageAudio e pageSize vêm
+// do texto da página e só valem quando o magnet e o rótulo não dizem nada.
+// Retorna false quando o magnet não serve.
+func buildTorrentFilmesHDsRelease(pageTitle, magnetLink, label string, pageAudio []schema.Audio, pageSize string) (tfhdsRelease, bool) {
+	magnetLink = normalizeMagnet(magnetLink)
+
+	magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+	if err != nil {
+		logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+		return tfhdsRelease{}, false
+	}
+
+	// Título do magnet sem limpar (mantém pontos como torrent-dos-filmes)
+	releaseTitle := magnetParsed.DisplayName
+	if releaseTitle == "" {
+		// Fallback manual: extrai dn= da URL do magnet
+		if m := reMagnetDN.FindStringSubmatch(magnetLink); len(m) > 1 {
+			releaseTitle, _ = url.QueryUnescape(m[1])
+			releaseTitle = strings.ReplaceAll(releaseTitle, "+", " ")
+			releaseTitle = strings.TrimSpace(releaseTitle)
+		}
+	}
+	if releaseTitle == "" {
+		releaseTitle = pageTitle
+	}
+
+	// o site publica dn colado ("TedLassoS01E01-05720p"), que vira episódio errado
+	// no parser; reconstrói pelo rótulo do botão ou descarta
+	if isGluedRelease(releaseTitle) {
+		rebuilt := releaseFromButtonLabel(pageTitle, label)
+		if rebuilt == "" {
+			logging.Debug().Str("title", releaseTitle).Str("label", label).Msg("Skipping glued release without usable label")
+			return tfhdsRelease{}, false
+		}
+		releaseTitle = rebuilt
+	}
+
+	// o rótulo do botão diz o áudio daquele magnet ("Dual Áudio", "Inglês");
+	// o dn só decide quando o rótulo não diz
+	magnetAudio := audioFromButtonLabel(label)
+	if len(magnetAudio) == 0 {
+		magnetAudio = getAudioFromTitle(releaseTitle, pageAudio)
+	}
+
+	// Fallback: detecta áudio pelo título se vazio
+	if len(magnetAudio) == 0 {
+		titleLower := strings.ToLower(releaseTitle)
+		// Dual = Português + Inglês
+		if strings.Contains(titleLower, "dual") {
+			magnetAudio = append(magnetAudio, "Português", "Inglês")
+		} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
+			strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
+			magnetAudio = append(magnetAudio, "Português")
+		} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
+			strings.Contains(titleLower, "english") {
+			magnetAudio = append(magnetAudio, "Inglês")
+		}
+	}
+
+	// xl= é o tamanho exato; depois o rótulo do botão, que é daquele magnet;
+	// os tamanhos soltos da página só quando casam um a um com os magnets
+	size := releaseSize(magnetLink, releaseTitle)
+	if size == "" {
+		size = sizeFromButtonLabel(label)
+	}
+	if size == "" {
+		size = pageSize
+	}
+
+	return tfhdsRelease{
+		magnet:   magnetLink,
+		title:    releaseTitle,
+		infoHash: magnetParsed.InfoHash.String(),
+		trackers: magnetParsed.Trackers,
+		audio:    magnetAudio,
+		size:     size,
+	}, true
+}
+
+var reMagnetDN = regexp.MustCompile(`(?i)[?&]dn=([^&]+)`)
+
 var magnetRegex = regexp.MustCompile(`magnet:\?[^\"'\s<>]+`)
 
 func normalizeMagnet(mag string) string {
@@ -534,13 +562,20 @@ func normalizeMagnet(mag string) string {
 	// Decodifica entidades HTML (necessário para extrair dn= e xl=)
 	mag = strings.ReplaceAll(mag, "&amp;", "&")
 	mag = strings.ReplaceAll(mag, "&#38;", "&")
+	mag = strings.ReplaceAll(mag, "&#038;", "&")
 	mag = strings.ReplaceAll(mag, "\n", "")
 	mag = strings.ReplaceAll(mag, "\r", "")
 	// Fix missing colon in urn:btih: (goquery strips it)
 	mag = regexp.MustCompile(`xt=urnbtih`).ReplaceAllString(mag, "xt=urn:btih:")
 	mag = regexp.MustCompile(`xt=urn:btih([^:])`).ReplaceAllString(mag, "xt=urn:btih:$1")
+	// o site publica trackers sem "://", ":" e "/" ("udptracker.opentrackr.org1337announce")
+	mag = reMangledTracker.ReplaceAllString(mag, "$1$2://$3:$4/announce")
 	return mag
 }
+
+// reMangledTracker casa um tr= sem pontuação: protocolo, host (termina em letra),
+// porta e "announce" colados.
+var reMangledTracker = regexp.MustCompile(`(?i)([?&]tr=)(udp|https?)([a-z0-9][a-z0-9.-]*\.[a-z]{2,})(\d{2,5})announce\b`)
 
 func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 	doc, err := getDocument(ctx, i, linkURL, torrentFilmesHDs.URL)
@@ -570,6 +605,40 @@ var (
 	reShowYear      = regexp.MustCompile(`\s*\(\d{4}\).*$`)
 	reNonNameChars  = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 )
+
+// torrentFilmesHDsButtonLabel devolve o rótulo de um botão de magnet. O botão
+// traz o rótulo num span próprio, entre ícones; botões antigos só têm texto.
+func torrentFilmesHDsButtonLabel(s *goquery.Selection) string {
+	if label := strings.TrimSpace(s.Find(".download-btn-label").Text()); label != "" {
+		return label
+	}
+	return s.Text()
+}
+
+// audioFromButtonLabel lê o áudio do rótulo do botão ("S04.1080p | MKV | 7.49 GB | Dual Áudio").
+// Retorna nil quando o rótulo não fala de áudio.
+func audioFromButtonLabel(label string) []schema.Audio {
+	l := normalizeForMatch(label)
+	switch {
+	case strings.Contains(l, "dual"):
+		return []schema.Audio{schema.AudioPortuguese, schema.AudioEnglish}
+	case strings.Contains(l, "dublado") || strings.Contains(l, "nacional") || strings.Contains(l, "portugues"):
+		return []schema.Audio{schema.AudioPortuguese}
+	case strings.Contains(l, "ingles"):
+		return []schema.Audio{schema.AudioEnglish}
+	}
+	// "Legendado" não diz o idioma original (pode ser coreano, japonês...): fica com o dn
+	return nil
+}
+
+// sizeFromButtonLabel devolve o tamanho escrito no rótulo do botão ("7.49 GB"),
+// ou "" se o rótulo não tiver exatamente um.
+func sizeFromButtonLabel(label string) string {
+	if sizes := findSizesFromText(label); len(sizes) == 1 {
+		return sizes[0]
+	}
+	return ""
+}
 
 // isGluedRelease reporta um dn sem separadores em volta do SxxEyy.
 func isGluedRelease(title string) bool {
