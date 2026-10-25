@@ -1,53 +1,77 @@
-version: '3'
-
+# Compose de referência: indexer + Redis + FlareSolverr + Meilisearch.
+# Uso: docker compose up -d --build   →  http://localhost:8080/
 services:
   torrent-indexer:
-    image: felipemarinho97/torrent-indexer:latest
+    # Build local deste fork. Se a pipeline publicar a imagem, dá para trocar por:
+    # image: ghcr.io/module195/torrent-indexer:develop
+    build: .
     container_name: torrent-indexer
     restart: unless-stopped
     ports:
       - 8080:7006
     networks:
       - indexer
+    depends_on:
+      - redis
+      - flaresolverr
+      - meilisearch
     environment:
-      - LOG_LEVEL=0 # 0=debug, 1=info, 2=warn, 3=error
+      - LOG_LEVEL=1 # 0=debug, 1=info, 2=warn, 3=error
       - REDIS_HOST=redis
       - FLARESOLVERR_ADDRESS=http://flaresolverr:8191
+      - FLARESOLVERR_POOL_SIZE=5
+      # Recria as sessões do pool se o FlareSolverr reiniciar
+      - FLARESOLVERR_HEALTHCHECK_SECONDS=60
 
-      ## Meilisearch configuration (optional)
-      # - MEILISEARCH_ADDRESS=http://meilisearch:7700
-      # - MEILISEARCH_KEY=my-secret-key
+      ## Cache das respostas JSON por indexer (X-Cache: HIT|MISS|SHARED) e
+      ## fetch partilhado para a mesma página. Recomendado quando o guindex consome o indexer.
+      - RESPONSE_CACHE_TTL=5m
+      - REQUEST_COALESCE=true
 
-      ## Magnet Metadata API configuration (optional)
+      ## Meilisearch: pesquisa no catálogo local (/search) e no dump do betor
+      - MEILISEARCH_ADDRESS=http://meilisearch:7700
+      - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-change-me-please}
+      # - BETOR_DUMP_URL=https://catalogo-data.betor.top/items.json
+      # - BETOR_DUMP_INTERVAL=8h
+
+      ## Magnet Metadata API (opcional)
       # - MAGNET_METADATA_API_ENABLED=false
       # - MAGNET_METADATA_API_ADDRESS=http://magnet-metadata-api:8080
       # - MAGNET_METADATA_API_TIMEOUT_SECONDS=10
-  
+
   redis:
-    image: redis:alpine
+    image: redis:8-alpine
     container_name: redis
     restart: unless-stopped
     networks:
       - indexer
 
-  ##### MEILISEARCH #####
-  ## This container is not necessary for the indexer to work,
-  ## deploy if you want to use the search feature
-  #
-  # meilisearch: 
-  #   image: getmeili/meilisearch:latest
-  #   container_name: meilisearch
-  #   restart: unless-stopped
-  #   networks:
-  #     - indexer
-  #   environment:
-  #     - MEILI_NO_ANALYTICS=true
-  #     - MEILI_MASTER_KEY=my-secret-key
+  flaresolverr:
+    # Resolve o desafio do Cloudflare nos sites que o exigem.
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+    networks:
+      - indexer
+
+  meilisearch:
+    # Versão fixa: o formato dos dados do Meilisearch muda entre versões.
+    image: getmeili/meilisearch:v1.55
+    container_name: meilisearch
+    restart: unless-stopped
+    environment:
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-change-me-please}
+    volumes:
+      - meili-data:/meili_data
+    networks:
+      - indexer
 
   ##### MAGNET METADATA API #####
-  ## This container is not necessary for the indexer to work,
-  ## deploy if you want to fetch metadata from p2p network
-  ## CAUTION: Never deploy this container on a cloud server (AWS, GCP, Azure, Oracle), or you will get banned!
+  ## Opcional: busca metadados na rede P2P.
+  ## CUIDADO: nunca suba este container num servidor cloud (AWS, GCP, Azure, Oracle), ou será banido!
   #
   # magnet-metadata-api:
   #   image: felipemarinho97/magnet-metadata-api:latest
@@ -69,6 +93,9 @@ services:
   #     - FALLBACK_INITIAL_CHUNK_SIZE_KB=24
   #   volumes:
   #     - ./magnet-metadata-cache:/home/torrent/cache
+
+volumes:
+  meili-data:
 
 networks:
   indexer:

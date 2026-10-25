@@ -17,7 +17,7 @@ RUN chmod +x /torrent-indexer
 
 #####################################################
 ### Build Final Image
-FROM alpine AS release
+FROM alpine:3.24 AS release
 LABEL maintainer="felipevm97@gmail.com"
 
 COPY --from=copy-binary /torrent-indexer /app/

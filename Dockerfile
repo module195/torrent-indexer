@@ -1,19 +1,23 @@
 FROM golang:1.25 AS builder
-ARG CACHE_BUST=1
 WORKDIR /go/src/app
+
+# Dependências numa camada própria: só voltam a ser baixadas quando go.mod/go.sum mudam.
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o app .
 
-RUN go get -d -v ./...
-RUN go install -v ./...
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .
+# Tag fixa para builds reprodutíveis (alpine:latest mudava de versão sem aviso).
+FROM alpine:3.24
+LABEL org.opencontainers.image.source="https://github.com/module195/torrent-indexer"
 
-FROM alpine:latest
-LABEL maintainer="felipevm97@gmail.com"
-
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /root/
 
 COPY --from=builder /go/src/app/app .
+
+EXPOSE 7006
 
 CMD ["/root/app"]
