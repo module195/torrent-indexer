@@ -24,4 +24,6 @@ type IndexedTorrent struct {
 type File struct {
 	Path string `json:"path"`
 	Size string `json:"size"`
+	// SizeBytes is Size as a number, so clients need not parse "1.2 GB" back
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 }

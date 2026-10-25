@@ -218,8 +218,9 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 			it.Files = make([]schema.File, len(m.Files))
 			for i, file := range m.Files {
 				it.Files[i] = schema.File{
-					Path: file.Path,
-					Size: utils.FormatBytes(file.Size),
+					Path:      file.Path,
+					Size:      utils.FormatBytes(file.Size),
+					SizeBytes: file.Size,
 				}
 			}
 		}
