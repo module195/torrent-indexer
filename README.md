@@ -23,9 +23,12 @@ Visit [https://torrent-indexer.darklyn.org/](https://torrent-indexer.darklyn.org
 If you have Docker + docker-compose installed, you can deploy it using the following command:
 
 ```bash
-curl -s https://raw.githubusercontent.com/felipemarinho97/torrent-indexer/main/docker-compose.yml > docker-compose.yml
-docker-compose up -d
+git clone https://github.com/module195/torrent-indexer.git
+cd torrent-indexer
+MEILI_MASTER_KEY=uma-chave-segura docker compose up -d --build
 ```
+
+The reference `docker-compose.yml` builds this fork and starts Redis, FlareSolverr and Meilisearch, with `RESPONSE_CACHE_TTL=5m` and `REQUEST_COALESCE=true` enabled (the settings guindex benefits from). Remove the services you don't need.
 
 The server will be available at [http://localhost:8080/](http://localhost:8080/).
 
