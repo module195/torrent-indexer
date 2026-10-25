@@ -79,16 +79,24 @@ func main() {
 
 	redis := cache.NewRedis()
 	searchIndex := meilisearch.NewSearchIndexer(os.Getenv("MEILISEARCH_ADDRESS"), os.Getenv("MEILISEARCH_KEY"), "torrents")
-	var magnetMetadataAPI *magnet.MetadataClient
+	metadataAPIAddress := ""
 	if os.Getenv("MAGNET_METADATA_API_ENABLED") == "true" {
-		timeout := 10 * time.Second
-		if v := os.Getenv("MAGNET_METADATA_API_TIMEOUT_SECONDS"); v != "" {
-			if t, err := strconv.Atoi(v); err == nil {
-				timeout = time.Duration(t) * time.Second
-			}
-		}
-		magnetMetadataAPI = magnet.NewClient(os.Getenv("MAGNET_METADATA_API_ADDRESS"), timeout, redis)
+		metadataAPIAddress = os.Getenv("MAGNET_METADATA_API_ADDRESS")
 	}
+	timeout := 10 * time.Second
+	if v := os.Getenv("MAGNET_METADATA_API_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			timeout = time.Duration(t) * time.Second
+		}
+	}
+	torrentCacheURL := magnet.DefaultTorrentCacheURL
+	if v := os.Getenv("TORRENT_CACHE_URL"); v != "" {
+		torrentCacheURL = v
+	}
+	if os.Getenv("TORRENT_CACHE_ENABLED") == "false" {
+		torrentCacheURL = ""
+	}
+	magnetMetadataAPI := magnet.NewClient(metadataAPIAddress, timeout, redis).WithTorrentCache(torrentCacheURL)
 	metrics := monitoring.NewMetrics()
 	metrics.Register()
 

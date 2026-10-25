@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hbollon/go-edlib"
 	"github.com/module195/torrent-indexer/logging"
@@ -185,6 +187,10 @@ func PreferReleaseSize(_ *Indexer, _ *http.Request, torrents []schema.IndexedTor
 	return torrents
 }
 
+// metadataLookupBudget bounds how long FullfilMissingMetadata waits for
+// torrent metadata, so a search isn't held up by slow lookups.
+const metadataLookupBudget = 4 * time.Second
+
 // FullfilMissingMetadata fills in missing metadata for indexed torrents
 func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	if r == nil {
@@ -194,24 +200,30 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 		return torrents
 	}
 
+	// What isn't found within the budget stays empty in this response; its
+	// lookup keeps going and is cached for the next search.
+	ctx, cancel := context.WithTimeout(r.Context(), metadataLookupBudget)
+	defer cancel()
 	seriesRequest := positiveIntParam(r, "season") > 0 || positiveIntParam(r, "episode") > 0
 	return utils.ParallelFlatMap(torrents, func(it schema.IndexedTorrent) ([]schema.IndexedTorrent, error) {
 		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFileList(it, seriesRequest) {
 			return []schema.IndexedTorrent{it}, nil
 		}
-		m, err := i.magnetMetadataAPI.FetchMetadata(r.Context(), it.MagnetLink)
+		m, err := i.magnetMetadataAPI.FetchMetadata(ctx, it.MagnetLink)
 		if err != nil {
 			return []schema.IndexedTorrent{it}, nil
 		}
 
 		// convert size in bytes to a human-readable format
 		it.Size = utils.FormatBytes(m.Size)
+		it.SizeBytes = m.Size
 
-		// Use name from metadata if available as it is more accurate
-		if m.Name != "" {
+		// The release name the indexer scraped wins; the torrent's own name
+		// only fills a missing one
+		if it.Title == "" && m.Name != "" {
 			it.Title = m.Name
 		}
-		logging.Debug().Str("info_hash", m.InfoHash).Str("size", it.Size).Msg("Retrieved metadata from MagnetMetadataAPI")
+		logging.Debug().Str("info_hash", m.InfoHash).Str("size", it.Size).Msg("Retrieved torrent metadata")
 
 		// If files are present, add them to the indexed torrent
 		if len(m.Files) > 0 {

@@ -401,7 +401,10 @@ func mergeTorrent(a, b schema.IndexedTorrent) schema.IndexedTorrent {
 	if out.OriginalTitle == "" && b.OriginalTitle != "" {
 		out.OriginalTitle = b.OriginalTitle
 	}
-	if out.Size == "" && b.Size != "" {
+	if out.SizeBytes == 0 && b.SizeBytes > 0 {
+		// the size read from the torrent itself beats one scraped from a page
+		out.Size, out.SizeBytes = b.Size, b.SizeBytes
+	} else if out.Size == "" && b.Size != "" {
 		out.Size = b.Size
 	}
 	if out.Year == "" && b.Year != "" {
