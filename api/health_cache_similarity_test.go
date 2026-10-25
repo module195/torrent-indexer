@@ -34,6 +34,7 @@ func Test_indexerStatsHealthRetry(t *testing.T) {
 	now := time.Date(2026, 10, 24, 20, 0, 0, 0, time.UTC)
 	s := NewIndexerStats()
 	s.now = func() time.Time { return now }
+	s.started = now.Add(-startupGrace)
 	status := func() IndexerStatus {
 		for _, st := range s.Snapshot() {
 			if st.Name == "rede_torrent" {
@@ -59,13 +60,62 @@ func Test_indexerStatsHealthRetry(t *testing.T) {
 		t.Fatal("should be offered for a retry after healthRetryAfter")
 	}
 	s.record("rede_torrent", http.StatusBadGateway, time.Second)
-	if status().Healthy {
-		t.Fatal("a failed retry keeps it out for another interval")
+	if st := status(); st.Healthy || st.RetryAfterS == nil || *st.RetryAfterS != int64((2*healthRetryAfter).Seconds()) {
+		t.Fatalf("a failed retry doubles the interval: %+v", st)
 	}
 	now = now.Add(healthRetryAfter)
+	if status().Healthy {
+		t.Fatal("still inside the doubled interval")
+	}
+	now = now.Add(healthRetryAfter)
+	if st := status(); !st.Healthy || st.RetryAfterS != nil {
+		t.Fatalf("should be offered again after 2x healthRetryAfter: %+v", st)
+	}
 	s.record("rede_torrent", http.StatusOK, time.Second)
 	if st := status(); !st.Healthy || st.ConsecutiveFailures != 0 {
 		t.Fatalf("a success resets the count: %+v", st)
+	}
+}
+
+func Test_indexerStatsRetryBackoff(t *testing.T) {
+	want := map[int]time.Duration{
+		unhealthyAfter:     healthRetryAfter,
+		unhealthyAfter + 1: 2 * healthRetryAfter,
+		unhealthyAfter + 3: 8 * healthRetryAfter,
+		unhealthyAfter + 4: healthRetryMax,
+		1000:               healthRetryMax,
+	}
+	for n, d := range want {
+		if got := retryAfter(n); got != d {
+			t.Errorf("retryAfter(%d) = %v, want %v", n, got, d)
+		}
+	}
+}
+
+func Test_indexerStatsStartupGrace(t *testing.T) {
+	now := time.Date(2026, 10, 24, 20, 0, 0, 0, time.UTC)
+	s := NewIndexerStats()
+	s.now = func() time.Time { return now }
+	s.started = now
+	healthy := func() bool {
+		for _, st := range s.Snapshot() {
+			if st.Name == "rede_torrent" {
+				return st.Healthy
+			}
+		}
+		t.Fatal("rede_torrent missing from snapshot")
+		return false
+	}
+
+	for range unhealthyAfter {
+		s.record("rede_torrent", http.StatusBadGateway, time.Second)
+	}
+	if !healthy() {
+		t.Fatal("failures right after start should not mark it unhealthy")
+	}
+	now = now.Add(startupGrace)
+	if healthy() {
+		t.Fatal("after the grace period the failures count again")
 	}
 }
 
@@ -91,5 +141,58 @@ func Test_responseCacheTTL(t *testing.T) {
 	}
 	if ttl, _ := responseCacheTTL(capturedResponse{status: 200, body: []byte(`{"count":0,"indexed_count":1}`)}, time.Minute); ttl != time.Minute {
 		t.Errorf("short TTL must not exceed the configured one: %v", ttl)
+	}
+}
+
+func Test_responseCacheTTLPerIndexer(t *testing.T) {
+	if got := ttlEnvName("torrent-dos-filmes"); got != "RESPONSE_CACHE_TTL_TORRENT_DOS_FILMES" {
+		t.Errorf("ttlEnvName: %s", got)
+	}
+	rc := &ResponseCache{ttl: 5 * time.Minute}
+	t.Setenv("RESPONSE_CACHE_TTL_BETOR", "30m")
+	t.Setenv("RESPONSE_CACHE_TTL_BLUDV_RU", "0")
+	t.Setenv("RESPONSE_CACHE_TTL_REDE_TORRENT", "nope")
+	cases := map[string]time.Duration{
+		"betor":            30 * time.Minute,
+		"bludv_ru":         0,
+		"rede_torrent":     5 * time.Minute, // invalid falls back to the global TTL
+		"comando_torrents": 5 * time.Minute,
+	}
+	for label, want := range cases {
+		if got := rc.ttlFor(label); got != want {
+			t.Errorf("ttlFor(%s) = %v, want %v", label, got, want)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	rc.Wrap("bludv_ru", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})(rec, httptest.NewRequest(http.MethodGet, "/indexers/bludv_ru?q=a", nil))
+	if rec.Header().Get("X-Cache") != "BYPASS" {
+		t.Errorf("TTL 0 should bypass the cache: %q", rec.Header().Get("X-Cache"))
+	}
+}
+
+func Test_wantsFresh(t *testing.T) {
+	cases := []struct {
+		url, cacheControl string
+		fresh             bool
+		query             string
+	}{
+		{"/indexers/x?q=a&nocache=1", "", true, "q=a"},
+		{"/indexers/x?nocache=true&q=a", "", true, "q=a"},
+		{"/indexers/x?q=a&nocache", "", true, "q=a"},
+		{"/indexers/x?q=a&nocache=0", "", false, "q=a"},
+		{"/indexers/x?q=a", "no-cache", true, "q=a"},
+		{"/indexers/x?q=a", "", false, "q=a"},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(http.MethodGet, c.url, nil)
+		if c.cacheControl != "" {
+			r.Header.Set("Cache-Control", c.cacheControl)
+		}
+		if got := wantsFresh(r); got != c.fresh || r.URL.RawQuery != c.query {
+			t.Errorf("%s: fresh=%v query=%q, want %v %q", c.url, got, r.URL.RawQuery, c.fresh, c.query)
+		}
 	}
 }

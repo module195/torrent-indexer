@@ -28,7 +28,8 @@ var bludvRu = IndexerMeta{
 func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	defer func() {
-		i.metrics.IndexerDuration.WithLabelValues("bludv_ru").Observe(time.Since(start).Seconds())
+		i.metrics.IndexerDuration.WithLabelValues(bludvRu.Label).Observe(time.Since(start).Seconds())
+		i.metrics.IndexerRequests.WithLabelValues(bludvRu.Label).Inc()
 	}()
 
 	ctx := r.Context()
@@ -59,7 +60,10 @@ func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) 
 	doc, err := getDocument(ctx, i, targetURL, bludvRu.URL)
 	if err != nil {
 		logging.Error().Err(err).Str("url", targetURL).Msg("Failed to get document")
-		http.Error(w, "Failed to fetch page", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		i.metrics.IndexerErrors.WithLabelValues(bludvRu.Label).Inc()
 		return
 	}
 

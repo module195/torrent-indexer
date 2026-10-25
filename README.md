@@ -45,8 +45,10 @@ You can configure the server using the following environment variables:
 - `FLARESOLVERR_TIMEOUT_SECONDS`: (optional) Timeout for flaresolverr requests. Default: `30`
 - `FLARESOLVERR_POOL_SIZE`: (optional) Number of FlareSolverr sessions in the pool. Default: `5`
 - `FLARESOLVERR_HEALTHCHECK_SECONDS`: (optional) Interval to verify pooled FlareSolverr sessions and recreate the ones lost after a FlareSolverr restart. Default: `N/A` (disabled)
+- `FLARESOLVERR_SESSIONS`: (optional) `true`/`false` forces whether the solver supports `sessions.*`. By default it is detected from `GET /`: FlareSolverr uses a pool of sessions; Byparr (which only speaks `request.get`) gets `FLARESOLVERR_POOL_SIZE` concurrency slots and is never sent `sessions.*`. Default: `N/A` (auto)
 - `REQUEST_COALESCE`: (optional) `true` makes concurrent requests for the same page URL share a single fetch. Default: `false`
 - `RESPONSE_CACHE_TTL`: (optional) Caches indexer JSON responses (keyed by indexer + full query; a response with 0 results is kept for at most 2 minutes, and only when the site listed torrents that were all filtered out) and coalesces identical concurrent requests; the `X-Cache` header becomes `HIT|MISS|SHARED` (it is `BYPASS` while disabled). Duration format, e.g. `5m`. Default: `N/A` (disabled)
+- `RESPONSE_CACHE_TTL_<NAME>`: (optional) Per-indexer override of `RESPONSE_CACHE_TTL`, where `NAME` is the indexer key in uppercase with underscores (e.g. `RESPONSE_CACHE_TTL_BETOR=30m`, `RESPONSE_CACHE_TTL_TORRENT_DOS_FILMES=2m`). `0` turns the response cache off for that indexer. Default: `N/A` (uses `RESPONSE_CACHE_TTL`)
 - `TRACKER_SCRAPE_MAX_ADDITIONAL`: (optional) Max number of UDP trackers from the extra tracker list scraped per torrent (the magnet's own trackers are always used). Default: `N/A` (all)
 - `TRACKER_SCRAPE_CONCURRENCY`: (optional) Global limit of concurrent UDP tracker scrapes. Default: `N/A` (unlimited)
 - `REDIS_NAMESPACED_KEYS`: (optional) `true` prefixes Redis keys by type (`doc:`, `doc:short:`, `peers:`, `meta:`). Old keys expire on their own. Default: `false`
@@ -76,9 +78,10 @@ You can configure the server using the following environment variables:
 These additions are optional: existing routes and their JSON are unchanged.
 
 - **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
+- **Cache bypass**: add `nocache=1` to an `/indexers/<name>` (or `/indexers/multi`) request, or send `Cache-Control: no-cache`, to skip the cached response and run the indexer again; the fresh result replaces the cached one. `nocache` is not part of the cache key. It skips only the response cache, not the page cache of `SHORT_LIVED_CACHE_EXPIRATION`, and `torrentfilmeshds` keeps its own cache.
 - **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
   - `api_version`: `2`
-  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429; true again 5 minutes after the last failure so clients retry it), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
+  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429; true again 5 minutes after the last failure so clients retry it, doubling on every failed retry up to 1 hour; always true during the first 2 minutes after start), `retry_after_s` (only while unhealthy: seconds until it is offered again), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
   - `search`: `{"meilisearch": true|false}` (configured and answering; probed at most once a minute)
   - `features`: `{"multi": true, "x_cache": true, "response_cache": true|false}`
 

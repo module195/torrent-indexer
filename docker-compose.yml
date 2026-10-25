@@ -48,6 +48,7 @@ services:
 
   flaresolverr:
     # Resolve o desafio do Cloudflare nos sites que o exigem.
+    # Alternativa: ghcr.io/thephaseless/byparr (detetado sozinho, sem sessões).
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     restart: unless-stopped
