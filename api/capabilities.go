@@ -64,10 +64,27 @@ const (
 	unhealthyAfter = 3
 	// healthRetryAfter is how long an unhealthy indexer stays out before it is
 	// reported healthy again, so clients that skip unhealthy indexers retry
-	// it. A failed retry keeps it out for another interval; a success resets
-	// the failure count.
+	// it. Each failed retry doubles the interval (5m, 10m, 20m, 40m) up to
+	// healthRetryMax; a success resets the failure count.
 	healthRetryAfter = 5 * time.Minute
+	healthRetryMax   = time.Hour
+	// startupGrace keeps every indexer reported healthy right after start,
+	// while FlareSolverr sessions and caches are still warming up, so a few
+	// early 5xx don't take indexers out for the first retry interval.
+	startupGrace = 2 * time.Minute
 )
+
+// retryAfter is how long an indexer with n consecutive failures stays out.
+func retryAfter(n int) time.Duration {
+	d := healthRetryAfter
+	for i := unhealthyAfter; i < n && d < healthRetryMax; i++ {
+		d *= 2
+	}
+	if d > healthRetryMax {
+		return healthRetryMax
+	}
+	return d
+}
 
 type indexerStat struct {
 	durations           []time.Duration // ring buffer of successful runs
@@ -80,13 +97,14 @@ type indexerStat struct {
 // /sources?v=2 can tell clients (guindex) which indexers are healthy and how
 // long they usually take. Cached replays (X-Cache: HIT) are not counted.
 type IndexerStats struct {
-	mu     sync.Mutex
-	byName map[string]*indexerStat
-	now    func() time.Time
+	mu      sync.Mutex
+	byName  map[string]*indexerStat
+	now     func() time.Time
+	started time.Time
 }
 
 func NewIndexerStats() *IndexerStats {
-	return &IndexerStats{byName: map[string]*indexerStat{}, now: time.Now}
+	return &IndexerStats{byName: map[string]*indexerStat{}, now: time.Now, started: time.Now()}
 }
 
 // statusWriter passes everything through and remembers the status code.
@@ -171,8 +189,10 @@ type IndexerStatus struct {
 	Healthy             bool   `json:"healthy"`
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 	LastFailureAt       string `json:"last_failure_at,omitempty"` // RFC 3339, UTC
-	P50Ms               *int64 `json:"p50_ms,omitempty"` // absent until a run succeeded
+	P50Ms               *int64 `json:"p50_ms,omitempty"`          // absent until a run succeeded
 	Samples             int    `json:"samples"`
+	// RetryAfterS is set only while unhealthy: seconds until it is offered again.
+	RetryAfterS *int64 `json:"retry_after_s,omitempty"`
 }
 
 // Snapshot returns the status of every active indexer, in ActiveIndexers order.
@@ -185,7 +205,13 @@ func (s *IndexerStats) Snapshot() []IndexerStatus {
 		is := IndexerStatus{Name: c.Name, SupportsText: c.SupportsText, SupportsIMDb: c.SupportsIMDb, Healthy: true}
 		if st := s.byName[c.Name]; st != nil {
 			is.ConsecutiveFailures = st.consecutiveFailures
-			is.Healthy = st.consecutiveFailures < unhealthyAfter || now.Sub(st.lastFailure) >= healthRetryAfter
+			if st.consecutiveFailures >= unhealthyAfter && now.Sub(s.started) >= startupGrace {
+				if left := retryAfter(st.consecutiveFailures) - now.Sub(st.lastFailure); left > 0 {
+					is.Healthy = false
+					secs := int64((left + time.Second - 1) / time.Second)
+					is.RetryAfterS = &secs
+				}
+			}
 			if !st.lastFailure.IsZero() {
 				is.LastFailureAt = st.lastFailure.UTC().Format(time.RFC3339)
 			}

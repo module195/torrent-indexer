@@ -78,7 +78,7 @@ These additions are optional: existing routes and their JSON are unchanged.
 - **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
 - **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
   - `api_version`: `2`
-  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429; true again 5 minutes after the last failure so clients retry it), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
+  - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429; true again 5 minutes after the last failure so clients retry it, doubling on every failed retry up to 1 hour; always true during the first 2 minutes after start), `retry_after_s` (only while unhealthy: seconds until it is offered again), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.
   - `search`: `{"meilisearch": true|false}` (configured and answering; probed at most once a minute)
   - `features`: `{"multi": true, "x_cache": true, "response_cache": true|false}`
 

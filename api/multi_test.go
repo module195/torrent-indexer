@@ -50,6 +50,7 @@ func Test_capabilitySupports(t *testing.T) {
 
 func Test_indexerStatsTrack(t *testing.T) {
 	s := NewIndexerStats()
+	s.started = time.Time{} // past the startup grace
 	fail := s.Track("rede_torrent", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})

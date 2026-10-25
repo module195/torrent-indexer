@@ -34,6 +34,7 @@ func Test_indexerStatsHealthRetry(t *testing.T) {
 	now := time.Date(2026, 10, 24, 20, 0, 0, 0, time.UTC)
 	s := NewIndexerStats()
 	s.now = func() time.Time { return now }
+	s.started = now.Add(-startupGrace)
 	status := func() IndexerStatus {
 		for _, st := range s.Snapshot() {
 			if st.Name == "rede_torrent" {
@@ -59,13 +60,62 @@ func Test_indexerStatsHealthRetry(t *testing.T) {
 		t.Fatal("should be offered for a retry after healthRetryAfter")
 	}
 	s.record("rede_torrent", http.StatusBadGateway, time.Second)
-	if status().Healthy {
-		t.Fatal("a failed retry keeps it out for another interval")
+	if st := status(); st.Healthy || st.RetryAfterS == nil || *st.RetryAfterS != int64((2*healthRetryAfter).Seconds()) {
+		t.Fatalf("a failed retry doubles the interval: %+v", st)
 	}
 	now = now.Add(healthRetryAfter)
+	if status().Healthy {
+		t.Fatal("still inside the doubled interval")
+	}
+	now = now.Add(healthRetryAfter)
+	if st := status(); !st.Healthy || st.RetryAfterS != nil {
+		t.Fatalf("should be offered again after 2x healthRetryAfter: %+v", st)
+	}
 	s.record("rede_torrent", http.StatusOK, time.Second)
 	if st := status(); !st.Healthy || st.ConsecutiveFailures != 0 {
 		t.Fatalf("a success resets the count: %+v", st)
+	}
+}
+
+func Test_indexerStatsRetryBackoff(t *testing.T) {
+	want := map[int]time.Duration{
+		unhealthyAfter:     healthRetryAfter,
+		unhealthyAfter + 1: 2 * healthRetryAfter,
+		unhealthyAfter + 3: 8 * healthRetryAfter,
+		unhealthyAfter + 4: healthRetryMax,
+		1000:               healthRetryMax,
+	}
+	for n, d := range want {
+		if got := retryAfter(n); got != d {
+			t.Errorf("retryAfter(%d) = %v, want %v", n, got, d)
+		}
+	}
+}
+
+func Test_indexerStatsStartupGrace(t *testing.T) {
+	now := time.Date(2026, 10, 24, 20, 0, 0, 0, time.UTC)
+	s := NewIndexerStats()
+	s.now = func() time.Time { return now }
+	s.started = now
+	healthy := func() bool {
+		for _, st := range s.Snapshot() {
+			if st.Name == "rede_torrent" {
+				return st.Healthy
+			}
+		}
+		t.Fatal("rede_torrent missing from snapshot")
+		return false
+	}
+
+	for range unhealthyAfter {
+		s.record("rede_torrent", http.StatusBadGateway, time.Second)
+	}
+	if !healthy() {
+		t.Fatal("failures right after start should not mark it unhealthy")
+	}
+	now = now.Add(startupGrace)
+	if healthy() {
+		t.Fatal("after the grace period the failures count again")
 	}
 }
 
