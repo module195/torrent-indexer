@@ -72,8 +72,6 @@ You can configure the server using the following environment variables:
 - `MAGNET_METADATA_API_ENABLED`: (optional) Enable the magnet metadata API. (deploy instrucitons [here](https://github.com/felipemarinho97/magnet-metadata-api)) Default: `false`
 - `MAGNET_METADATA_API_ADDRESS`: (optional) The address of your magnet metadata API. Default: `N/A`
 - `MAGNET_METADATA_API_TIMEOUT_SECONDS`: (optional) The timeout for the magnet metadata API requests in seconds. Default: `10`
-- `TORRENT_CACHE_ENABLED`: (optional) Set to `false` to stop fetching `.torrent` files from a public cache by info hash. The cache fills in `size`, `size_bytes` and `files` when the site doesn't publish them, before the magnet metadata API (if enabled) is tried. Results are cached in Redis for 7 days, misses for 6 hours. Default: `true`
-- `TORRENT_CACHE_URL`: (optional) The public `.torrent` cache; the upper-case info hash and `.torrent` are appended. Default: `https://itorrents.net/torrent/`
 - `INDEXER_<NAME>_URL`: (optional) Set a custom URL for the indexer. Where the "NAME" will be always uppercase indexer key with underscores. ex: `INDEXER_DODO_FILMES_URL=https://my-proxied-dodo-url.org`
 
 ## API for aggregating clients (e.g. guindex)
