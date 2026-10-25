@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +28,14 @@ type FlareSolverr struct {
 	initiated   atomic.Bool
 	initMu      sync.Mutex
 	lastInit    time.Time
+	// sessionless is set for solvers that only speak request.get (Byparr):
+	// sessions.* are never sent and pool entries are just concurrency slots.
+	sessionless atomic.Bool
+	detected    bool // guarded by initMu
 }
+
+// dumbSession is a pool slot that is not a real FlareSolverr session.
+const dumbSession = "dumb-session"
 
 // flaresolverrInitRetryInterval throttles re-initialization attempts when
 // FlareSolverr was unreachable at startup.
@@ -88,9 +96,75 @@ func (f *FlareSolverr) tryInit() bool {
 	return true
 }
 
+// detectSessionSupport finds out whether the solver understands sessions.*.
+// FLARESOLVERR_SESSIONS=true|false forces the answer. Otherwise GET / is
+// probed: FlareSolverr answers {"msg": "FlareSolverr is ready!", ...}; Byparr
+// redirects to /docs and ignores "cmd", so a sessions.list/create would make
+// it open the browser on an empty URL. Unknown solvers keep the old behavior
+// (try sessions, fall back to slots if sessions.list is not understood).
+func (f *FlareSolverr) detectSessionSupport() (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FLARESOLVERR_SESSIONS"))) {
+	case "true", "1":
+		return true, nil
+	case "false", "0":
+		return false, nil
+	}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(strings.TrimRight(f.url, "/") + "/")
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return false, nil // Byparr: / -> /docs
+	}
+	var info struct {
+		Msg string `json:"msg"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info)
+	msg := strings.ToLower(info.Msg)
+	if strings.Contains(msg, "byparr") {
+		return false, nil
+	}
+	return true, nil
+}
+
+// SupportsSessions reports whether sessions.* are used with this solver.
+func (f *FlareSolverr) SupportsSessions() bool {
+	return !f.sessionless.Load()
+}
+
+func (f *FlareSolverr) fillDumbSessions() {
+	for len(f.sessionPool) < cap(f.sessionPool) {
+		f.sessionPool <- dumbSession
+	}
+}
+
 func (f *FlareSolverr) FillSessionPool() error {
 	// Check if the pool is already filled
 	if len(f.sessionPool) == cap(f.sessionPool) {
+		return nil
+	}
+
+	if !f.detected {
+		supported, err := f.detectSessionSupport()
+		if err != nil {
+			logging.Error().Err(err).Msg("Failed to reach FlareSolverr")
+			return err
+		}
+		f.detected = true
+		f.sessionless.Store(!supported)
+		if !supported {
+			logging.Info().Int("slots", cap(f.sessionPool)).Msg("Solver without session support (e.g. Byparr); using concurrency slots instead of sessions")
+		}
+	}
+	if f.sessionless.Load() {
+		f.fillDumbSessions()
 		return nil
 	}
 
@@ -100,9 +174,7 @@ func (f *FlareSolverr) FillSessionPool() error {
 		// if fail to list sessions, it may not support the sessions.list command
 		// create new dumb sessions to fill the pool
 		if err == ErrListSessions {
-			for len(f.sessionPool) < cap(f.sessionPool) {
-				f.sessionPool <- "dumb-session"
-			}
+			f.fillDumbSessions()
 			return nil
 		}
 		logging.Error().Err(err).Msg("Failed to list existing FlareSolverr sessions")
@@ -282,7 +354,9 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 		"cmd":        "request.get",
 		"url":        _url,
 		"maxTimeout": f.maxTimeout,
-		"session":    session,
+	}
+	if session != dumbSession {
+		body["session"] = session
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
@@ -404,6 +478,9 @@ func (f *FlareSolverr) healthCheck() {
 	if !f.initiated.Load() {
 		f.tryInit()
 		return
+	}
+	if f.sessionless.Load() {
+		return // nothing to verify: slots, not sessions
 	}
 
 	sessions, err := f.ListSessions()
