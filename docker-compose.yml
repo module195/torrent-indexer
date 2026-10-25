@@ -31,6 +31,8 @@ services:
       ## Meilisearch: pesquisa no catálogo local (/search) e no dump do betor
       - MEILISEARCH_ADDRESS=http://meilisearch:7700
       - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-change-me-please}
+      # Liga/desliga a sincronização do dump do betor (false desliga mesmo com BETOR_DUMP_URL)
+      # - BETOR_DUMP=true
       # - BETOR_DUMP_URL=https://catalogo-data.betor.top/items.json
       # - BETOR_DUMP_INTERVAL=8h
 

@@ -27,6 +27,9 @@ import (
 // imdbQueryRE matches IMDB IDs (tt followed by 7-8 digits)
 var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
 
+// defaultBetorDumpURL is used when BETOR_DUMP=true and BETOR_DUMP_URL is empty.
+const defaultBetorDumpURL = "https://catalogo-data.betor.top/items.json"
+
 // skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
 // Brazilian torrent sites don't support IMDB search, so we skip these
 // queries to avoid unnecessary FlareSolverr requests.
@@ -143,8 +146,27 @@ func main() {
 		FallbackTitleEnabled: os.Getenv("FALLBACK_TITLE_ENABLED") == "true",
 	}
 
-	// Optional: load the betor catalog dump into Meilisearch on an interval
-	if dumpURL := os.Getenv("BETOR_DUMP_URL"); dumpURL != "" && searchIndex.BaseURL != "" {
+	// Optional: load the betor catalog dump into Meilisearch on an interval.
+	// BETOR_DUMP=false turns it off even with BETOR_DUMP_URL set; BETOR_DUMP=true
+	// turns it on, using the default dump URL when BETOR_DUMP_URL is empty.
+	dumpURL := os.Getenv("BETOR_DUMP_URL")
+	dumpEnabled := dumpURL != ""
+	if v := os.Getenv("BETOR_DUMP"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			dumpEnabled = b
+		} else {
+			logging.Error().Str("value", v).Msg("Invalid BETOR_DUMP; expected true or false")
+		}
+	}
+	if dumpEnabled && dumpURL == "" {
+		dumpURL = defaultBetorDumpURL
+	}
+	if dumpEnabled && searchIndex.BaseURL == "" {
+		logging.Warn().Msg("Betor dump sync needs MEILISEARCH_ADDRESS; not starting it")
+	} else if !dumpEnabled && dumpURL != "" {
+		logging.Info().Msg("Betor dump sync disabled by BETOR_DUMP=false")
+	}
+	if dumpEnabled && searchIndex.BaseURL != "" {
 		interval := 8 * time.Hour
 		if v := os.Getenv("BETOR_DUMP_INTERVAL"); v != "" {
 			if d, err := str2duration.ParseDuration(v); err == nil && d >= time.Minute {
