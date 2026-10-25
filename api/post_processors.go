@@ -546,6 +546,24 @@ func torrentComparator(params url.Values) func(i, j schema.IndexedTorrent) int {
 	}
 }
 
+// releaseHasQuality tells whether a release name states the asked resolution.
+// Only the name is checked: a magnet's base32 info hash can contain "4K".
+// 2160p, 4k and uhd are the same thing.
+func releaseHasQuality(title, quality string) bool {
+	name := " " + reNonAlphanumeric.ReplaceAllString(strings.ToLower(title), " ") + " "
+	words := []string{quality}
+	switch quality {
+	case "2160p", "4k", "uhd":
+		words = []string{"2160p", "4k", "uhd"}
+	}
+	for _, w := range words {
+		if strings.Contains(name, " "+w+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterBy filters the results based on various query parameters
 func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	if r == nil {
@@ -557,6 +575,7 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	imdbParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("imdb")))
 	season := positiveIntParam(r, "season")
 	episode := positiveIntParam(r, "episode")
+	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 
 	var requestedAudioTags []string
 	if audioParam != "" {
@@ -576,7 +595,7 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 	}
 
 	// If no filters are active, return original list
-	if len(requestedAudioTags) == 0 && yearParam == "" && imdbParam == "" && season == 0 && episode == 0 {
+	if len(requestedAudioTags) == 0 && yearParam == "" && imdbParam == "" && season == 0 && episode == 0 && quality == "" {
 		return torrents
 	}
 
@@ -605,6 +624,11 @@ func FilterBy(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []s
 			if !hasAudio {
 				return false
 			}
+		}
+
+		// Filter by resolution (quality=2160p, 4k, 1080p...)
+		if quality != "" && !releaseHasQuality(it.Title, quality) {
+			return false
 		}
 
 		// Filter by Year
