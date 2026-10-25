@@ -32,8 +32,10 @@ var baixarapido = IndexerMeta{
 
 func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	metadata := baixarapido
 	defer func() {
-		i.metrics.IndexerDuration.WithLabelValues("baixarapido").Observe(time.Since(start).Seconds())
+		i.metrics.IndexerDuration.WithLabelValues(metadata.Label).Observe(time.Since(start).Seconds())
+		i.metrics.IndexerRequests.WithLabelValues(metadata.Label).Inc()
 	}()
 
 	ctx := r.Context()
@@ -77,7 +79,10 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 	doc, err := getDocument(ctx, i, targetURL, baixarapido.URL)
 	if err != nil {
 		logging.Error().Err(err).Str("url", targetURL).Msg("Failed to get document")
-		http.Error(w, "Failed to fetch page", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		i.metrics.IndexerErrors.WithLabelValues(metadata.Label).Inc()
 		return
 	}
 
