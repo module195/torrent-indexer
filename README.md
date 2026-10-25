@@ -92,7 +92,7 @@ These additions are optional: existing routes and their JSON are unchanged.
   - `indexers`: comma-separated names; default: all of `indexer_names`.
   - `deadline_ms`: default `8000`, clamped to `500..60000`. Calls still running at the deadline keep going in the background (up to 2 min) so their result lands in the response cache for the next request.
   - Any other parameter (`limit`, `sortBy`, `sortDirection`, `audio`, `year`, `imdb`, ...) is passed to each call; `limit` and the sort are applied again to the merged list.
-  - Pairs an indexer can't answer are skipped instead of called (IMDb ids only go to `betor`, text queries only to the others).
+  - Pairs an indexer can't answer are skipped instead of called (IMDb ids only go to `betor` and `bludv_ru`, text queries to all but `betor`).
   - Response: `results` (deduplicated by info hash: highest seeders/leechers and similarity, union of audio/trackers, plus `found_in` with every indexer that had it), `count`, `partial` (true if any call timed out) and `calls`: one entry per pair with `indexer`, `q`, `state` (`ok|error|skipped|timeout`), `status`, `count`, `duration_ms`, `cache` (the call's `X-Cache`) and `reason` (`imdb_not_supported`, `text_not_supported`, `unknown_indexer` or the indexer's error).
   - `/search` is unchanged and still only queries Meilisearch.
 

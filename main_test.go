@@ -18,6 +18,7 @@ func Test_skipIMDBQueryMiddleware(t *testing.T) {
 	}{
 		{"/search?q=tt11198330", true},
 		{"/indexers/betor?q=tt11198330", true},
+		{"/indexers/bludv_ru?q=tt11198330", true},
 		{"/indexers/multi?q=tt11198330", true},
 		{"/indexers/rede_torrent?q=duna", true},
 		{"/indexers/rede_torrent?q=tt11198330", false},

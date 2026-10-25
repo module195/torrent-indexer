@@ -30,17 +30,34 @@ var imdbQueryRE = regexp.MustCompile(`^tt\d{7,8}$`)
 // defaultBetorDumpURL is used when BETOR_DUMP=true and BETOR_DUMP_URL is empty.
 const defaultBetorDumpURL = "https://catalogo-data.betor.top/items.json"
 
+// indexerSupportsIMDb reports whether path is /indexers/<name> of an indexer
+// whose capability accepts IMDb IDs.
+func indexerSupportsIMDb(path string) bool {
+	name, ok := strings.CutPrefix(path, "/indexers/")
+	if !ok {
+		return false
+	}
+	name = strings.TrimSuffix(name, "/")
+	for _, c := range handler.ActiveIndexers {
+		if c.Name == name {
+			return c.SupportsIMDb
+		}
+	}
+	return false
+}
+
 // skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
 // Brazilian torrent sites don't support IMDB search, so we skip these
 // queries to avoid unnecessary FlareSolverr requests.
-// Exceptions: the betor indexer supports IMDb, and /search looks the ID up in
-// the imdb field of the Meilisearch index, so we let those requests through.
+// Exceptions: the indexers whose capability says they support IMDb (betor,
+// bludv_ru), and /search, which looks the ID up in the imdb field of the
+// Meilisearch index, so we let those requests through.
 func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Libera o indexer betor (ele suporta IMDb), o /indexers/multi, que
-		// aplica as mesmas regras por indexer (veja handler.ActiveIndexers), e
-		// o /search, que busca o ID no campo imdb do Meilisearch
-		if strings.HasPrefix(r.URL.Path, "/indexers/betor") || r.URL.Path == "/indexers/multi" || r.URL.Path == "/search" {
+		// Libera os indexers que aceitam IMDb (veja handler.ActiveIndexers), o
+		// /indexers/multi, que aplica as mesmas regras por indexer, e o
+		// /search, que busca o ID no campo imdb do Meilisearch
+		if indexerSupportsIMDb(r.URL.Path) || r.URL.Path == "/indexers/multi" || r.URL.Path == "/search" {
 			next.ServeHTTP(w, r)
 			return
 		}
