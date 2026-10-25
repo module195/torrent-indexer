@@ -75,6 +75,18 @@ func getDocument(ctx context.Context, i *Indexer, link, referer string) (*goquer
 	return doc, nil
 }
 
+// getListingDocument fetches a page whose content changes often (search
+// results, home): it skips the long-lived document cache and relies on the
+// requester's short-lived one, so new releases show up within minutes.
+func getListingDocument(ctx context.Context, i *Indexer, link, referer string) (*goquery.Document, error) {
+	resp, err := i.requester.GetDocument(ctx, link, referer)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+	return goquery.NewDocumentFromReader(resp)
+}
+
 func getPublishedDateFromMeta(document *goquery.Document) time.Time {
 	var date time.Time
 	//<meta property="article:published_time" content="2019-08-23T13:20:57+00:00">
