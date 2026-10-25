@@ -80,6 +80,14 @@ func Test_normalizeMagnet_mangledTrackers(t *testing.T) {
 	}
 }
 
+func Test_normalizeMagnet_translatedAnnounce(t *testing.T) {
+	in := "magnet:?xt=urn:btih:abc&amp;tr=udp%3A%2F%2Fevan.im%3A6969%2Fanunciar&amp;tr=udp://r.l5.ca:6969/anunciar"
+	want := "magnet:?xt=urn:btih:abc&tr=udp%3A%2F%2Fevan.im%3A6969%2Fannounce&tr=udp://r.l5.ca:6969/announce"
+	if got := normalizeMagnet(in); got != want {
+		t.Errorf("normalizeMagnet() = %q, want %q", got, want)
+	}
+}
+
 func Test_audioFromButtonLabel(t *testing.T) {
 	cases := []struct {
 		label string

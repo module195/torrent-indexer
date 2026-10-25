@@ -711,8 +711,14 @@ func normalizeMagnet(mag string) string {
 	mag = regexp.MustCompile(`xt=urn:btih([^:])`).ReplaceAllString(mag, "xt=urn:btih:$1")
 	// o site publica trackers sem "://", ":" e "/" ("udptracker.opentrackr.org1337announce")
 	mag = reMangledTracker.ReplaceAllString(mag, "$1$2://$3:$4/announce")
+	// o tradutor automático do site troca "announce" por "anunciar" em alguns trackers
+	mag = reTranslatedAnnounce.ReplaceAllString(mag, "${1}announce$2")
 	return mag
 }
+
+// reTranslatedAnnounce casa o "anunciar" no fim do caminho de um tracker,
+// com a barra literal ou codificada (%2F).
+var reTranslatedAnnounce = regexp.MustCompile(`(?i)(/|%2F)anunciar(&|$)`)
 
 // reMangledTracker casa um tr= sem pontuação: protocolo, host (termina em letra),
 // porta e "announce" colados.
