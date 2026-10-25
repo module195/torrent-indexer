@@ -109,7 +109,7 @@ func Test_parseBaixarApidoPage_oppenheimer(t *testing.T) {
 		if it.Year != "2023" {
 			t.Errorf("%s: year = %q", it.Title, it.Year)
 		}
-		if is4KRelease(it.Title) {
+		if strings.Contains(strings.ToLower(it.Title), "2160p") || strings.Contains(strings.ToLower(it.Title), "4k") {
 			fourK++
 		}
 		hasPT := false
@@ -177,15 +177,15 @@ func Test_filterBaixarApidoEntries(t *testing.T) {
 		{url: "https://baixarapido.com/baixar/lupin-3a-temporada/", name: "Lupin - 3ª Temporada"},
 		{url: "https://baixarapido.com/baixar/lupin-4a-temporada/", name: "Lupin - 4ª Temporada"},
 	}
-	got := filterBaixarApidoEntries(entries[:2], baixarApidoQuery{title: "Duna", year: "2021"}, false)
+	got := filterBaixarApidoEntries(entries[:2], baixarApidoQuery{title: "Duna", year: "2021"})
 	if len(got) != 1 || got[0].year != "2021" {
 		t.Errorf("year filter = %+v", got)
 	}
-	got = filterBaixarApidoEntries(entries[:2], baixarApidoQuery{title: "Duna"}, true)
-	if len(got) != 1 || got[0].year != "2021" {
-		t.Errorf("4K filter = %+v", got)
+	got = filterBaixarApidoEntries(entries[:2], baixarApidoQuery{title: "Duna"})
+	if len(got) != 2 {
+		t.Errorf("no quality filter: got %+v", got)
 	}
-	got = filterBaixarApidoEntries(entries[2:], baixarApidoQuery{title: "Lupin", season: 4}, false)
+	got = filterBaixarApidoEntries(entries[2:], baixarApidoQuery{title: "Lupin", season: 4})
 	if len(got) != 1 || !strings.Contains(got[0].url, "4a-temporada") {
 		t.Errorf("season filter = %+v", got)
 	}
@@ -200,17 +200,5 @@ func Test_withSeasonEpisodeParams(t *testing.T) {
 	r = httptest.NewRequest("GET", "/indexers/baixarapido?q=x&season=1", nil)
 	if withSeasonEpisodeParams(r, 2, 3) != r {
 		t.Errorf("caller's season must win")
-	}
-}
-
-func Test_releaseHasQuality(t *testing.T) {
-	if !releaseHasQuality("Oppenheimer 2023 BluRay 2160p x265", "4k") || !releaseHasQuality("Oppenheimer IMAX 4K HDR", "2160p") {
-		t.Error("4K release not matched")
-	}
-	if releaseHasQuality("Oppenheimer 2023 BluRay 1080p x264", "2160p") {
-		t.Error("1080p release matched as 4K")
-	}
-	if !releaseHasQuality("Oppenheimer.2023.1080p.WEB-DL", "1080p") {
-		t.Error("1080p not matched")
 	}
 }

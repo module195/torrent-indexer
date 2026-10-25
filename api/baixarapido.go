@@ -61,7 +61,6 @@ var (
 	reBAIMDbID        = regexp.MustCompile(`tt\d{7,8}`)
 	reBAResolution    = regexp.MustCompile(`(?i)\b(\d{3,4}p)\b`)
 	reBAHasResolution = regexp.MustCompile(`(?i)\d{3,4}p`)
-	reBA4K            = regexp.MustCompile(`(?i)\b(2160p|4k|uhd)\b`)
 	reBAMagnetDN      = regexp.MustCompile(`[?&]dn=([^&]+)`)
 	reBASubtitleFile  = regexp.MustCompile(`(?i)\.(srt|sub|ass|ssa|idx|vtt)$`)
 	reBAVideoMarker   = regexp.MustCompile(`(?i)\d{3,4}p|\b(4k|uhd|mkv|mp4|avi|bluray|blu-ray|bdrip|brrip|web-?dl|web-?rip|hdtv|remux|x264|x265|hevc|h264|h265)\b`)
@@ -253,8 +252,7 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	only4K := wants4K(r)
-	entries = filterBaixarApidoEntries(entries, bq, only4K)
+	entries = filterBaixarApidoEntries(entries, bq)
 	links := make([]string, 0, len(entries))
 	for _, e := range entries {
 		links = append(links, e.url)
@@ -266,9 +264,6 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 
 	allTorrents := fetchBaixarApidoPages(ctx, i, links, start.Add(baixarApidoBudget))
 	allTorrents = dedupBaixarApidoTorrents(allTorrents)
-	if only4K {
-		allTorrents = utils.Filter(allTorrents, func(t schema.IndexedTorrent) bool { return is4KRelease(t.Title) })
-	}
 	scrapeBaixarApidoSeeders(ctx, i, allTorrents)
 
 	// Ordena: seeders desc, year desc, title asc
@@ -426,9 +421,9 @@ func nilToEmpty(v any) any {
 }
 
 // filterBaixarApidoEntries descarta, antes de abrir a página, o resultado que
-// com certeza não serve: ano longe do pedido, outra temporada, ou sem 4K
-// quando só 4K foi pedido. Sem o dado, o resultado fica.
-func filterBaixarApidoEntries(entries []baixarApidoEntry, bq baixarApidoQuery, only4K bool) []baixarApidoEntry {
+// com certeza não serve: ano longe do pedido ou outra temporada. Sem o dado,
+// o resultado fica.
+func filterBaixarApidoEntries(entries []baixarApidoEntry, bq baixarApidoQuery) []baixarApidoEntry {
 	wantYear, _ := strconv.Atoi(bq.year)
 	return utils.Filter(entries, func(e baixarApidoEntry) bool {
 		if wantYear > 0 && bq.season == 0 {
@@ -440,9 +435,6 @@ func filterBaixarApidoEntries(entries []baixarApidoEntry, bq baixarApidoQuery, o
 			if s := baixarApidoEntrySeason(e); s > 0 && s != bq.season {
 				return false
 			}
-		}
-		if only4K && e.formats != "" && !reBA4K.MatchString(e.formats) {
-			return false
 		}
 		return true
 	})
@@ -459,24 +451,6 @@ func baixarApidoEntrySeason(e baixarApidoEntry) int {
 		return n
 	}
 	return 0
-}
-
-// wants4K diz se a chamada pediu só 4K (quality=2160p ou quality=4k).
-func wants4K(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality"))) {
-	case "2160p", "4k", "uhd":
-		return true
-	}
-	return false
-}
-
-// is4KRelease testa só o nome do release: o infohash em base32 e as URLs de
-// tracker de um magnet dão falso positivo.
-func is4KRelease(title string) bool {
-	return releaseHasQuality(title, "2160p")
 }
 
 // fetchBaixarApidoPages abre as páginas com concorrência limitada e devolve o
