@@ -248,6 +248,27 @@ func Test_isMultiEpisodeRelease(t *testing.T) {
 	}
 }
 
+func Test_needsFileList(t *testing.T) {
+	cases := []struct {
+		name   string
+		it     schema.IndexedTorrent
+		series bool
+		want   bool
+	}{
+		{"named pack", schema.IndexedTorrent{Title: "The.Boys.S04.1080p.WEB-DL"}, false, true},
+		{"bare release name on a season page", schema.IndexedTorrent{Title: "The.Boys.1080p.WEB-DL", OriginalTitle: "The Boys 4ª Temporada Completa"}, false, true},
+		{"single episode on a season page", schema.IndexedTorrent{Title: "The.Boys.S04E05.1080p", OriginalTitle: "The Boys 4ª Temporada"}, false, false},
+		{"movie", schema.IndexedTorrent{Title: "Oppenheimer.2023.1080p", OriginalTitle: "Oppenheimer (2023)"}, false, false},
+		{"any release on a series request", schema.IndexedTorrent{Title: "The.Boys.S04E05.1080p"}, true, true},
+		{"already has files", schema.IndexedTorrent{Title: "The.Boys.S04.1080p", Files: []schema.File{{Path: "a.mkv"}}}, true, false},
+	}
+	for _, c := range cases {
+		if got := needsFileList(c.it, c.series); got != c.want {
+			t.Errorf("%s: needsFileList = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func Test_FilterByEpisodeGluedAndNamelessReleases(t *testing.T) {
 	page := "https://site/the-boys-4-temporada/"
 	in := []schema.IndexedTorrent{

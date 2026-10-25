@@ -196,10 +196,7 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 
 	seriesRequest := positiveIntParam(r, "season") > 0 || positiveIntParam(r, "episode") > 0
 	return utils.ParallelFlatMap(torrents, func(it schema.IndexedTorrent) ([]schema.IndexedTorrent, error) {
-		// files[] is what lets a client pick the episode inside a pack, so a
-		// pack (or any release, on a season/episode request) still needs it
-		needsFiles := len(it.Files) == 0 && (seriesRequest || isMultiEpisodeRelease(it.Title))
-		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFiles {
+		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFileList(it, seriesRequest) {
 			return []schema.IndexedTorrent{it}, nil
 		}
 		m, err := i.magnetMetadataAPI.FetchMetadata(r.Context(), it.MagnetLink)
@@ -221,8 +218,9 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 			it.Files = make([]schema.File, len(m.Files))
 			for i, file := range m.Files {
 				it.Files[i] = schema.File{
-					Path: file.Path,
-					Size: utils.FormatBytes(file.Size),
+					Path:      file.Path,
+					Size:      utils.FormatBytes(file.Size),
+					SizeBytes: file.Size,
 				}
 			}
 		}
@@ -234,6 +232,26 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 
 		return []schema.IndexedTorrent{it}, nil
 	})
+}
+
+// needsFileList reports whether a torrent still lacks the files[] that let a
+// client pick the episode inside a pack: any release on a season/episode
+// request, or one whose release name announces a pack. A release name that
+// says nothing about seasons defers to the page title ("4ª Temporada"); one
+// that names a single episode does not, or every episode listed on a season
+// page would cost a metadata lookup.
+func needsFileList(it schema.IndexedTorrent, seriesRequest bool) bool {
+	if len(it.Files) > 0 {
+		return false
+	}
+	if seriesRequest {
+		return true
+	}
+	release := parseReleaseInfo(it.Title)
+	if !release.empty() {
+		return isMultiEpisodeRelease(it.Title)
+	}
+	return isMultiEpisodeRelease(it.OriginalTitle)
 }
 
 func FallbackPostTitle(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
