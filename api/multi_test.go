@@ -195,7 +195,7 @@ func Test_multiHandlerMergesAndSkips(t *testing.T) {
 		"betor|matrix":           "skipped:text_not_supported",
 		"nope|matrix":            "skipped:unknown_indexer",
 		"rede_torrent|tt0133093": "skipped:imdb_not_supported",
-		"bludv_ru|tt0133093":     "skipped:imdb_not_supported",
+		"bludv_ru|tt0133093":     "ok:",
 		"betor|tt0133093":        "ok:",
 		"nope|tt0133093":         "skipped:unknown_indexer",
 	}

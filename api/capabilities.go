@@ -12,9 +12,10 @@ import (
 )
 
 // IndexerCapability describes which kind of query an indexer can answer.
-// It mirrors the routing rules: only betor accepts IMDb IDs (for the others
-// skipIMDBQueryMiddleware answers an empty list) and betor itself answers an
-// empty list for free-text queries.
+// It mirrors the routing rules: only betor and bludv_ru accept IMDb IDs (for
+// the others skipIMDBQueryMiddleware answers an empty list) and betor itself
+// answers an empty list for free-text queries. bludv_ru finds an ID because
+// its posts link the IMDb page and the WordPress search reads the post body.
 type IndexerCapability struct {
 	Name         string
 	SupportsText bool
@@ -28,7 +29,7 @@ var ActiveIndexers = []IndexerCapability{
 	{Name: "comando_torrents", SupportsText: true},
 	{Name: "rede_torrent", SupportsText: true},
 	{Name: "torrentfilmeshds", SupportsText: true},
-	{Name: "bludv_ru", SupportsText: true},
+	{Name: "bludv_ru", SupportsText: true, SupportsIMDb: true},
 	{Name: "baixarapido", SupportsText: true},
 	{Name: "betor", SupportsIMDb: true},
 }
