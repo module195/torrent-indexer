@@ -12,7 +12,6 @@ import (
 
 	"github.com/hbollon/go-edlib"
 	"github.com/module195/torrent-indexer/logging"
-	"github.com/module195/torrent-indexer/magnet"
 	"github.com/module195/torrent-indexer/schema"
 	"github.com/module195/torrent-indexer/utils"
 )
@@ -186,17 +185,12 @@ func PreferReleaseSize(_ *Indexer, _ *http.Request, torrents []schema.IndexedTor
 	return torrents
 }
 
-// FullfilMissingMetadata fills in missing metadata for indexed torrents.
-// With only the public torrent cache configured it never waits on the
-// network: it uses what Redis already has and looks the rest up in the
-// background, so the next search gets it. With the magnet-metadata-api
-// configured it waits for the lookup, as before.
+// FullfilMissingMetadata fills in missing metadata for indexed torrents
 func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	if r == nil {
 		return torrents
 	}
-	mc := i.magnetMetadataAPI
-	if !mc.IsEnabled() {
+	if !i.magnetMetadataAPI.IsEnabled() {
 		return torrents
 	}
 
@@ -205,30 +199,19 @@ func FullfilMissingMetadata(i *Indexer, r *http.Request, torrents []schema.Index
 		if it.Size != "" && it.Title != "" && it.OriginalTitle != "" && !needsFileList(it, seriesRequest) {
 			return []schema.IndexedTorrent{it}, nil
 		}
-		var m *magnet.MetadataResponse
-		if mc.HasAPI() {
-			var err error
-			if m, err = mc.FetchMetadata(r.Context(), it.MagnetLink); err != nil {
-				return []schema.IndexedTorrent{it}, nil
-			}
-		} else {
-			var ok bool
-			if m, ok = mc.CachedMetadata(r.Context(), it.MagnetLink); !ok {
-				mc.Prefetch(r.Context(), it.MagnetLink)
-				return []schema.IndexedTorrent{it}, nil
-			}
+		m, err := i.magnetMetadataAPI.FetchMetadata(r.Context(), it.MagnetLink)
+		if err != nil {
+			return []schema.IndexedTorrent{it}, nil
 		}
 
 		// convert size in bytes to a human-readable format
 		it.Size = utils.FormatBytes(m.Size)
-		it.SizeBytes = m.Size
 
-		// The release name the indexer scraped wins; the torrent's own name
-		// only fills a missing one
-		if it.Title == "" && m.Name != "" {
+		// Use name from metadata if available as it is more accurate
+		if m.Name != "" {
 			it.Title = m.Name
 		}
-		logging.Debug().Str("info_hash", m.InfoHash).Str("size", it.Size).Msg("Retrieved torrent metadata")
+		logging.Debug().Str("info_hash", m.InfoHash).Str("size", it.Size).Msg("Retrieved metadata from MagnetMetadataAPI")
 
 		// If files are present, add them to the indexed torrent
 		if len(m.Files) > 0 {
