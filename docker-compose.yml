@@ -36,10 +36,6 @@ services:
       # - BETOR_DUMP_URL=https://catalogo-data.betor.top/items.json
       # - BETOR_DUMP_INTERVAL=8h
 
-      ## Cache público de .torrent (preenche size/files pelo infohash; ligado por padrão)
-      # - TORRENT_CACHE_ENABLED=true
-      # - TORRENT_CACHE_URL=https://itorrents.net/torrent/
-
       ## Magnet Metadata API (opcional)
       # - MAGNET_METADATA_API_ENABLED=false
       # - MAGNET_METADATA_API_ADDRESS=http://magnet-metadata-api:8080
