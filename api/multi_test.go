@@ -7,9 +7,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/module195/torrent-indexer/schema"
 )
@@ -336,5 +338,139 @@ func Test_multiHandlerRunsQueriesInOrder(t *testing.T) {
 	}
 	if notStarted == 0 {
 		t.Fatal("test needs more jobs than workers")
+	}
+}
+
+func Test_multiHandlerLimitsCallsPerIndexer(t *testing.T) {
+	// two requests at once, 5 queries each: no indexer ever runs more than
+	// multiPerIndexer calls, counting both requests
+	var mu sync.Mutex
+	inflight, peak := 0, 0
+	h := NewMultiHandler(map[string]http.HandlerFunc{
+		"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			inflight++
+			peak = max(peak, inflight)
+			mu.Unlock()
+			time.Sleep(30 * time.Millisecond)
+			mu.Lock()
+			inflight--
+			mu.Unlock()
+			fakeIndexer()(w, r)
+		},
+	})
+	var wg sync.WaitGroup
+	for r := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, p := runMulti(t, h, "/indexers/multi?indexers=rede_torrent&deadline_ms=5000&q=a"+strconv.Itoa(r)+"&q=b&q=c&q=d&q=e")
+			for _, c := range p.Calls {
+				if c.State != "ok" {
+					t.Errorf("call %+v", c)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if peak > multiPerIndexer {
+		t.Fatalf("peak %d calls on one indexer, limit %d", peak, multiPerIndexer)
+	}
+	if peak < 2 {
+		t.Fatalf("calls should still run in parallel, peak %d", peak)
+	}
+}
+
+func Test_multiHandlerWarmsCacheWithQueuedCalls(t *testing.T) {
+	// a call still queued at the deadline runs in the background when
+	// WarmCache is on, and is dropped when it is off
+	for _, warm := range []bool{false, true} {
+		var ran atomic.Int32
+		release := make(chan struct{})
+		h := NewMultiHandler(map[string]http.HandlerFunc{
+			"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+				ran.Add(1)
+				<-release
+				fakeIndexer()(w, r)
+			},
+		})
+		h.WarmCache = warm
+		url := "/indexers/multi?indexers=rede_torrent&deadline_ms=500"
+		for i := range multiPerIndexer + 1 {
+			url += "&q=t" + strconv.Itoa(i)
+		}
+		_, p := runMulti(t, h, url)
+		if last := p.Calls[len(p.Calls)-1]; last.Reason != "not_started" {
+			t.Fatalf("warm=%v: last call %+v", warm, last)
+		}
+		close(release)
+		want := int32(multiPerIndexer)
+		if warm {
+			want++
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for ran.Load() < want && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		if got := ran.Load(); got != want {
+			t.Errorf("warm=%v: %d calls ran, want %d", warm, got, want)
+		}
+	}
+}
+
+func Test_mergeMultiResultsPrefersRealTitle(t *testing.T) {
+	calls := []multiCall{{Indexer: "bludv"}, {Indexer: "rede_torrent"}}
+	results := map[int][]schema.IndexedTorrent{
+		0: {{Title: "[UNSAFE] Matrix.1999.1080p", InfoHash: "aa", SeedCount: 9, MagnetLink: "magnet:?xt=urn:btih:aa&dn=first"}},
+		1: {{Title: "Matrix (1999) 1080p", InfoHash: "AA", SeedCount: 3, Size: "2 GB"}},
+	}
+	out := mergeMultiResults(calls, results)
+	if len(out) != 1 {
+		t.Fatalf("got %+v", out)
+	}
+	m := out[0]
+	if m.Title != "Matrix (1999) 1080p" || m.SeedCount != 9 || m.Size != "2 GB" || m.MagnetLink == "" {
+		t.Fatalf("merge kept the wrong base: %+v", m)
+	}
+	if !slices.Equal(m.FoundIn, []string{"bludv", "rede_torrent"}) {
+		t.Fatalf("found_in %v", m.FoundIn)
+	}
+}
+
+func Test_multiHandlerLimitsAfterMerge(t *testing.T) {
+	var sawLimit atomic.Bool
+	h := NewMultiHandler(map[string]http.HandlerFunc{
+		"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Has("limit") {
+				sawLimit.Store(true)
+			}
+			fakeIndexer(
+				schema.IndexedTorrent{Title: "a", InfoHash: "a1", SeedCount: 1},
+				schema.IndexedTorrent{Title: "b", InfoHash: "b1", SeedCount: 50},
+			)(w, r)
+		},
+	})
+	rec, p := runMulti(t, h, "/indexers/multi?q=matrix&indexers=rede_torrent&limit=1&sortBy=seed_count&sortDirection=desc")
+	if rec.Code != http.StatusOK || p.Count != 1 || p.Results[0].InfoHash != "b1" {
+		t.Fatalf("%d %+v", rec.Code, p)
+	}
+	if sawLimit.Load() {
+		t.Fatal("limit was forwarded to the sub-call")
+	}
+}
+
+func Test_multiQueriesCollapsesWhitespace(t *testing.T) {
+	got := multiQueries([]string{"  the  matrix ", "The Matrix", "the\tmatrix", "", "dune"})
+	if !slices.Equal(got, []string{"the matrix", "dune"}) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func Test_errorReasonKeepsUTF8(t *testing.T) {
+	msg := strings.Repeat("a", 199) + "ção"
+	got := errorReason([]byte(`{"error":"` + msg + `"}`))
+	if !utf8.ValidString(got) || len(got) > 200 || got != strings.Repeat("a", 199) {
+		t.Fatalf("got %q", got)
 	}
 }

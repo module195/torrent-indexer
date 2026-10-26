@@ -241,7 +241,9 @@ func main() {
 		indexerMux.HandleFunc("/indexers/"+name, h)
 	}
 	indexerMux.HandleFunc("/indexers/manual", handler.WithXCacheBypass(indexers.HandlerManualIndexer))
-	indexerMux.Handle("/indexers/multi", handler.NewMultiHandler(indexerRoutes))
+	multi := handler.NewMultiHandler(indexerRoutes)
+	multi.WarmCache = respCache != nil
+	indexerMux.Handle("/indexers/multi", multi)
 	indexerMux.Handle("/sources", handler.NewSourcesHandler(stats, searchIndex, handler.Features{
 		Multi:         true,
 		XCache:        true,
