@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/module195/torrent-indexer/cache"
@@ -217,4 +218,45 @@ var staticAdditionalTrackers = []string{
 	"udp://tracker.dump.cl:6969/announce",
 	"udp://tracker.dler.org:6969/announce",
 	"udp://tracker.bittor.pw:1337/announce",
+}
+
+// best-list refresh started by BestTrackers, so a burst of cold requests
+// starts a single fetch
+var trackersRefreshing atomic.Bool
+
+// BestTrackers returns up to n trackers from the ranked public list, for the
+// magnets the API hands out. It never blocks on the network: while the
+// in-memory copy is cold it answers with the static list and, when Redis is
+// available, refreshes the dynamic one in the background.
+func BestTrackers(r *cache.Redis, n int) []string {
+	trackersMemMu.Lock()
+	list := trackersMem
+	warm := len(list) > 0 && time.Now().Before(trackersMemExpires)
+	trackersMemMu.Unlock()
+
+	if !warm {
+		if r != nil && trackersRefreshing.CompareAndSwap(false, true) {
+			go func() {
+				defer trackersRefreshing.Store(false)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				getAdditionalTrackers(ctx, r)
+			}()
+		}
+		if len(list) == 0 {
+			list = staticAdditionalTrackers
+		}
+	}
+
+	out := make([]string, 0, n)
+	for _, t := range list {
+		if len(out) == n {
+			break
+		}
+		lower := strings.ToLower(t)
+		if strings.HasPrefix(lower, "udp://") || strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+			out = append(out, t)
+		}
+	}
+	return out
 }

@@ -52,6 +52,7 @@ var GlobalPostProcessors = []PostProcessorFunc{
 	SendToSearchIndexer,    // Send indexed torrents to Meilisearch
 	FilterBy,               // Filter results based on query params (audio, etc.)
 	ApplyLimit,             // Limit number of results based on query param
+	AddPublicTrackers,      // Best public trackers in each magnet (kept out of Meilisearch)
 }
 
 type IndexersConfig struct {

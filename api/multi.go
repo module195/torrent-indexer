@@ -460,6 +460,8 @@ func mergeMultiResults(calls []multiCall, results map[int][]schema.IndexedTorren
 	ptrs := make([]*schema.IndexedTorrent, len(out))
 	for i := range out {
 		ptrs[i] = &out[i].IndexedTorrent
+		// the merge unions the trackers of every copy, but keeps the base copy's magnet
+		syncMagnetTrackers(ptrs[i])
 	}
 	propagateIMDB(ptrs)
 	return out
