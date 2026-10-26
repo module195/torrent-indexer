@@ -71,6 +71,7 @@ func Test_mergeByBestSimilarity(t *testing.T) {
 type meiliRequest struct {
 	Q          string   `json:"q"`
 	Attributes []string `json:"attributesToSearchOn"`
+	Limit      int      `json:"limit"`
 }
 
 // fakeMeili serves hits for every search and records the requests it got.
@@ -212,6 +213,85 @@ func Test_searchHandlerFilterResultsFalseWithTranslation(t *testing.T) {
 	}
 	if titles := titlesOf(p.Results); !slices.Equal(titles, []string{"Homem-Aranha Sem Volta Para Casa", "Zzz Qqq"}) {
 		t.Errorf("got %v, want everything, best first", titles)
+	}
+}
+
+func Test_searchHandlerPunctuatedEpisodeQuery(t *testing.T) {
+	h, _ := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Star Wars Andor S02E03 1080p WEB-DL", OriginalTitle: "Andor: Uma História Star Wars 2ª Temporada", InfoHash: "a1"},
+	})
+
+	// the colon used to stay in the query the similarity was computed with,
+	// and the release scored 0.33, under the 0.45 an episode query needs
+	if p := runSearch(t, h, "Star Wars: Andor S02E03"); p.Count != 1 {
+		t.Errorf("got %v, want the S02E03 release", titlesOf(p.Results))
+	}
+}
+
+func Test_searchHandlerIMDbFetchesAllThenLimits(t *testing.T) {
+	imdb := "https://www.imdb.com/title/tt0903747/"
+	h, requests := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Breaking Bad S01E01", InfoHash: "a1", IMDB: imdb, SeedCount: 1},
+		{Title: "Breaking Bad S05E16", InfoHash: "b2", IMDB: imdb, SeedCount: 50},
+	})
+
+	p := runSearchParams(t, h, url.Values{"q": {"tt0903747"}, "limit": {"1"}})
+
+	if reqs := requests(); len(reqs) != 1 || reqs[0].Limit != meilisearch.MaxSearchHits {
+		t.Fatalf("searches %+v, want one asking for %d hits", reqs, meilisearch.MaxSearchHits)
+	}
+	// Meilisearch returns IMDb hits oldest first: the limit applies after sorting
+	if titles := titlesOf(p.Results); !slices.Equal(titles, []string{"Breaking Bad S05E16"}) {
+		t.Errorf("got %v, want the best seeded release", titles)
+	}
+}
+
+func Test_translateToPTWholeWords(t *testing.T) {
+	for in, want := range map[string]string{
+		"The Elephant Man":         "The Elephant Man",
+		"Iron Mantis":              "Iron Mantis",
+		"Jokers Wild":              "Jokers Wild",
+		"spider man":               "homem aranha",
+		"Spider Man Brand New Day": "homem aranha um novo dia",
+		"the ant man 2015":         "the homem formiga 2015",
+	} {
+		if got := translateToPT(in); got != want {
+			t.Errorf("translateToPT(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func Test_SendToSearchIndexerUpserts(t *testing.T) {
+	type call struct {
+		method string
+		docs   []map[string]any
+	}
+	calls := make(chan call, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var docs []map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&docs)
+		calls <- call{r.Method, docs}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	i := &Indexer{search: meilisearch.NewSearchIndexer(srv.URL, "", "torrents")}
+	SendToSearchIndexer(i, nil, []schema.IndexedTorrent{
+		{Title: "Sem IMDb", InfoHash: "a1", Similarity: 0.7},
+		{Title: "Sem hash"},
+	})
+
+	c := <-calls
+	if c.method != http.MethodPut {
+		t.Errorf("method %s, want PUT (POST replaces the document and drops the dump's IMDb)", c.method)
+	}
+	if len(c.docs) != 1 || c.docs[0]["id"] != "a1" {
+		t.Fatalf("docs %v, want only the one with a hash", c.docs)
+	}
+	for _, key := range []string{"imdb", "similarity"} {
+		if _, ok := c.docs[0][key]; ok {
+			t.Errorf("doc carries %q: %v", key, c.docs[0])
+		}
 	}
 }
 

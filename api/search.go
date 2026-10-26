@@ -68,40 +68,42 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		}
 	}
 
-	// IMDb ID (tt1234567): look it up in the imdb field instead of the titles
+	ctx := r.Context()
+
+	// IMDb ID (tt1234567): look it up in the imdb field instead of the titles.
+	// Every hit ties, and Meilisearch returns them oldest first: fetch them
+	// all, so the limit keeps the best seeded (and whatever season/episode
+	// asks for) instead of the first ones indexed.
 	if id := strings.ToLower(query); reIMDbID.MatchString(id) {
-		results, err := h.Module.SearchTorrentByIMDB(id, limit)
+		results, err := h.Module.SearchTorrentByIMDB(ctx, id, meilisearch.MaxSearchHits)
 		if err != nil {
 			http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 			return
 		}
-		writeSearchResults(w, filterAndSort(r, filterByIMDBID(results, id)))
+		results = filterAndSort(r, filterByIMDBID(results, id))
+		writeSearchResults(w, results[:min(len(results), limit)])
 		return
 	}
 
 	// Try original query
-	results, err := h.Module.SearchTorrent(query, limit)
+	results, err := h.Module.SearchTorrent(ctx, query, limit)
 	if err != nil {
 		http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 		return
 	}
 
-	// Apply similarity filter against original query
-	results = AddSimilarityCheck(nil, r, results)
+	// Apply the similarity filter against the query Meilisearch got: the raw
+	// one keeps punctuation ("Star Wars: Andor S02E03") that release names
+	// lack, and the right release scored below the threshold
+	results = AddSimilarityCheck(nil, withQuery(r, query), results)
 
 	// If poor results and query looks English, try Portuguese translation
 	if shouldTryTranslation(query, results) {
 		ptQueryStr := translateToPT(query)
 		if ptQueryStr != query {
-			ptResults, err := h.Module.SearchTorrent(ptQueryStr, limit)
+			ptResults, err := h.Module.SearchTorrent(ctx, ptQueryStr, limit)
 			if err == nil && len(ptResults) > 0 {
-				// Create a new request with translated query for similarity check
-				ptRequest := r.Clone(r.Context())
-				q := ptRequest.URL.Query()
-				q.Set("q", ptQueryStr)
-				ptRequest.URL.RawQuery = q.Encode()
-
-				ptResults = AddSimilarityCheck(nil, ptRequest, ptResults)
+				ptResults = AddSimilarityCheck(nil, withQuery(r, ptQueryStr), ptResults)
 
 				// Merge: keep items with good similarity against EN or PT query
 				results = mergeByBestSimilarity(results, ptResults, translationMinSimilarity(r))
@@ -110,6 +112,15 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	}
 
 	writeSearchResults(w, filterAndSort(r, results))
+}
+
+// withQuery returns a copy of r whose q is query.
+func withQuery(r *http.Request, query string) *http.Request {
+	clone := r.Clone(r.Context())
+	q := clone.URL.Query()
+	q.Set("q", query)
+	clone.URL.RawQuery = q.Encode()
+	return clone
 }
 
 // filterAndSort applies the same audio/year/imdb/season/episode filters and
@@ -252,10 +263,12 @@ func translateToPT(query string) string {
 		return pt
 	}
 
-	// Partial match (longest first)
+	// Partial match on whole words (longest first): "ant man" is not in
+	// "the elephant man", nor "iron man" in "iron mantis"
+	padded := " " + qLower + " "
 	var matches []string
 	for en := range translations {
-		if strings.Contains(qLower, en) {
+		if strings.Contains(padded, " "+en+" ") {
 			matches = append(matches, en)
 		}
 	}
@@ -269,7 +282,7 @@ func translateToPT(query string) string {
 	}
 	if len(matches) > 0 {
 		en := matches[0]
-		return strings.Replace(qLower, en, translations[en], 1)
+		return strings.TrimSpace(strings.Replace(padded, " "+en+" ", " "+translations[en]+" ", 1))
 	}
 
 	return query
