@@ -216,6 +216,22 @@ func Test_searchHandlerFilterResultsFalseWithTranslation(t *testing.T) {
 	}
 }
 
+func Test_searchHandlerTranslationKeepsLimit(t *testing.T) {
+	h, requests := fakeMeili(t, []schema.IndexedTorrent{
+		{Title: "Homem-Aranha Sem Volta Para Casa", InfoHash: "a1"},
+		{Title: "Homem-Aranha Longe de Casa", InfoHash: "a2"},
+	})
+
+	p := runSearchParams(t, h, url.Values{"q": {"spider man"}, "filter_results": {"false"}, "limit": {"1"}})
+
+	if n := len(requests()); n != 2 {
+		t.Fatalf("%d searches, want the EN one and the PT translation", n)
+	}
+	if p.Count != 1 {
+		t.Errorf("got %v, want limit=1 to hold after the PT results are merged", titlesOf(p.Results))
+	}
+}
+
 func Test_searchHandlerPunctuatedEpisodeQuery(t *testing.T) {
 	h, _ := fakeMeili(t, []schema.IndexedTorrent{
 		{Title: "Star Wars Andor S02E03 1080p WEB-DL", OriginalTitle: "Andor: Uma História Star Wars 2ª Temporada", InfoHash: "a1"},

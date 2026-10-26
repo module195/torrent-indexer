@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hbollon/go-edlib"
 	"github.com/module195/torrent-indexer/logging"
@@ -347,7 +348,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 		// title is a substring of every query, so it never counts as a match
 		titleMatches := combined != "" && qq.title != "" &&
 			(strings.Contains(combined, qq.title) || strings.Contains(qq.title, combined)) &&
-			releaseYearFits(it, qq.year)
+			releaseYearFits(it, qq)
 
 		if titleMatches && releaseFitsQuery(it, qq) {
 			sim = max(sim, 0.5)
@@ -367,6 +368,12 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 			threshold = minSim
 		}
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
+			// A release that names only other seasons (the 6ª Temporada
+			// pack for "Round 6 temporada 2") is never it, however close
+			// the names are
+			if info := releaseInfoOf(it); qq.season > 0 && !info.empty() && !info.hasSeason(qq.season) {
+				return false
+			}
 			if episodeQuery {
 				// Must have the episode OR very high similarity; a release
 				// that names other episodes (S05E02 for S05E03) is never it,
@@ -393,11 +400,12 @@ type queryTarget struct {
 }
 
 var (
-	reQuerySxxEyy   = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})\b`)
-	reQuerySxx      = regexp.MustCompile(`\bs(\d{1,2})\b`)
-	reQuerySeason   = regexp.MustCompile(`\b(?:temporada|season) (\d{1,2})\b|\b(\d{1,2}) ?(?:ª|º|a|o)? temporada\b`)
-	reQueryEpisode  = regexp.MustCompile(`\b(?:episodio|episode) (\d{1,3})\b`)
-	reQueryLastYear = regexp.MustCompile(` ((?:19|20)\d{2})$`)
+	reQuerySxxEyy    = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})\b`)
+	reQuerySxx       = regexp.MustCompile(`\bs(\d{1,2})\b`)
+	reQuerySeason    = regexp.MustCompile(`\b(?:temporada|season) (\d{1,2})\b`)
+	reQueryNthSeason = regexp.MustCompile(`\b(\d{1,2}) ?(?:ª|º|a|o)? temporada\b`)
+	reQueryEpisode   = regexp.MustCompile(`\b(?:episodio|episode) (\d{1,3})\b`)
+	reQueryLastYear  = regexp.MustCompile(` ((?:19|20)\d{2})$`)
 )
 
 // parseQueryTarget splits a normalized query into title, season, episode and
@@ -411,9 +419,14 @@ func parseQueryTarget(qNorm string) queryTarget {
 		qt.season, qt.episode = atoi(m[1]), atoi(m[2])
 		rest = reQuerySxxEyy.ReplaceAllString(rest, " ")
 	}
-	if m := reQuerySeason.FindStringSubmatch(rest); m != nil {
-		qt.season = max(qt.season, atoi(m[1]+m[2]))
-		rest = reQuerySeason.ReplaceAllString(rest, " ")
+	// "temporada 2" first: in "Round 6 temporada 2" the 6 belongs to the
+	// title, and "6 temporada" would read as the sixth season
+	for _, re := range []*regexp.Regexp{reQuerySeason, reQueryNthSeason} {
+		if m := re.FindStringSubmatch(rest); m != nil {
+			qt.season = max(qt.season, atoi(m[1]))
+			rest = re.ReplaceAllString(rest, " ")
+			break
+		}
 	}
 	if m := reQuerySxx.FindStringSubmatch(rest); m != nil {
 		qt.season = max(qt.season, atoi(m[1]))
@@ -469,22 +482,25 @@ func releaseFitsQuery(it schema.IndexedTorrent, qt queryTarget) bool {
 
 // releaseYearFits reports whether the release can be from the query's year:
 // a release that states years, none of them within a year of it, is another
-// work with the same name (Duna 1984 for "Duna 2021").
-func releaseYearFits(it schema.IndexedTorrent, year string) bool {
-	if year == "" {
+// work with the same name (Duna 1984 for "Duna 2021"). A number that is part
+// of the title (the 1923 of "1923 2022") is not a release year.
+func releaseYearFits(it schema.IndexedTorrent, qt queryTarget) bool {
+	if qt.year == "" {
 		return true
 	}
-	want, _ := strconv.Atoi(year)
-	years := reYearWord.FindAllString(stripAudioSuffix(it.Title)+" "+it.Year, -1)
-	if len(years) == 0 {
-		return true
-	}
-	for _, y := range years {
+	want, _ := strconv.Atoi(qt.year)
+	titleWords := strings.Fields(qt.title)
+	found := false
+	for _, y := range reYearWord.FindAllString(stripAudioSuffix(it.Title)+" "+it.Year, -1) {
+		if slices.Contains(titleWords, y) {
+			continue
+		}
+		found = true
 		if n, _ := strconv.Atoi(y); n >= want-1 && n <= want+1 {
 			return true
 		}
 	}
-	return false
+	return !found
 }
 
 func sortBySimilarity(torrents []schema.IndexedTorrent) {
@@ -566,13 +582,18 @@ func cleanOriginalTitleForMatch(s string) string {
 // extractMainTitle extracts the main title before year/quality patterns
 func extractMainTitle(title string) string {
 	// Remove quality/year patterns: S01E01, 1080p, WEB-DL, etc.
-	re := reQualitySuffix
-	title = re.ReplaceAllString(title, "")
-	// Remove year patterns
-	reYear := reYearWord
-	title = reYear.ReplaceAllString(title, "")
-	return strings.TrimSpace(title)
+	title = reQualitySuffix.ReplaceAllString(title, "")
+	// Remove years, but not one the title starts with: that one is the title
+	// itself (1917, 2012, 1923), and removing it left nothing to compare
+	lead := ""
+	if loc := reYearWord.FindStringIndex(title); loc != nil &&
+		strings.IndexFunc(title[:loc[0]], isLetterOrDigit) < 0 {
+		lead, title = title[:loc[1]], title[loc[1]:]
+	}
+	return strings.TrimSpace(lead + reYearWord.ReplaceAllString(title, ""))
 }
+
+func isLetterOrDigit(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // ApplyLimit limits the number of results based on the "limit" query parameter
 func ApplyLimit(_ *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {

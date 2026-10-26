@@ -32,7 +32,7 @@ var (
 	reYearWord        = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	reLeadingArticle  = regexp.MustCompile(`(?i)^(the|a|o|os|as|um|uma)\s+`)
 	reIMDbID          = regexp.MustCompile(`^tt[0-9]{7,8}$`)
-	reQualitySuffix   = regexp.MustCompile(`(?i)(s\d+e\d+|1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado).*$`)
+	reQualitySuffix   = regexp.MustCompile(`(?i)(s\d+e\d+|\b(?:1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado)).*$`)
 	rePortugueseChars = regexp.MustCompile(`[áéíóúãõç]`)
 )
 

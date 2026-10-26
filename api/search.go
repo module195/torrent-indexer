@@ -111,7 +111,9 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 		}
 	}
 
-	writeSearchResults(w, filterAndSort(r, results))
+	// the PT search adds up to limit more
+	results = filterAndSort(r, results)
+	writeSearchResults(w, results[:min(len(results), limit)])
 }
 
 // withQuery returns a copy of r whose q is query.
