@@ -304,7 +304,7 @@ func Test_AddSimilarityCheckKeepsSequelAndPollutedOriginalTitle(t *testing.T) {
 
 func Test_normalizeSequelNumbers(t *testing.T) {
 	for in, want := range map[string]string{
-		"Duna: Parte Dois":      "duna: parte 2",
+		"Duna: Parte Dois":      "duna parte 2",
 		"Dune Part Two":         "dune part 2",
 		"Duna - Parte  Dois":    "duna parte 2",
 		"um sonho de liberdade": "um sonho de liberdade",

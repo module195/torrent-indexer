@@ -2,6 +2,7 @@ package meilisearch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,10 +33,19 @@ type HealthStatus struct {
 	Status string `json:"status"`
 }
 
+// MaxSearchHits is the most hits one search returns (Meilisearch's default
+// pagination.maxTotalHits).
+const MaxSearchHits = 1000
+
 // NewSearchIndexer creates a new instance of SearchIndexer.
 func NewSearchIndexer(baseURL, apiKey, indexName string) *SearchIndexer {
+	// guindex sends several /search at once, and the indexers upsert in the
+	// background: the default 2 idle connections per host would make most of
+	// these requests open a new one.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 32
 	return &SearchIndexer{
-		Client:    &http.Client{Timeout: 10 * time.Second},
+		Client:    &http.Client{Timeout: 10 * time.Second, Transport: transport},
 		BaseURL:   baseURL,
 		APIKey:    apiKey,
 		IndexName: indexName,
@@ -156,28 +166,30 @@ func (t *SearchIndexer) UpsertDocuments(docs []map[string]any) error {
 // Every word must match first; when nothing does ("the boys 4 temporada",
 // "duna parte dois" against "Duna Parte 2"), it retries dropping words from
 // the end, and the caller's similarity check discards what is too far off.
-func (t *SearchIndexer) SearchTorrent(query string, limit int) ([]schema.IndexedTorrent, error) {
+// At most 200 hits per search.
+func (t *SearchIndexer) SearchTorrent(ctx context.Context, query string, limit int) ([]schema.IndexedTorrent, error) {
 	attributes := []string{"title", "original_title"}
-	hits, err := t.search(query, limit, attributes, "all")
+	limit = min(limit, 200)
+	hits, err := t.search(ctx, query, limit, attributes, "all")
 	if err != nil || len(hits) > 0 || len(strings.Fields(query)) < 2 {
 		return hits, err
 	}
-	return t.search(query, limit, attributes, "last")
+	return t.search(ctx, query, limit, attributes, "last")
 }
 
 // SearchTorrentByIMDB searches the imdb field (an IMDb URL such as
 // https://www.imdb.com/title/tt3581920/) for an ID like tt3581920. The ID is
 // sent as a phrase so Meilisearch applies neither typo tolerance nor prefix
-// matching; callers should still check the ID exactly.
-func (t *SearchIndexer) SearchTorrentByIMDB(imdbID string, limit int) ([]schema.IndexedTorrent, error) {
-	return t.search(`"`+imdbID+`"`, limit, []string{"imdb"}, "all")
+// matching; callers should still check the ID exactly. Every hit ties on
+// relevance, so Meilisearch returns them in insertion order, oldest first:
+// callers wanting the newest releases of a long series must ask for up to
+// MaxSearchHits and sort them themselves.
+func (t *SearchIndexer) SearchTorrentByIMDB(ctx context.Context, imdbID string, limit int) ([]schema.IndexedTorrent, error) {
+	return t.search(ctx, `"`+imdbID+`"`, min(limit, MaxSearchHits), []string{"imdb"}, "all")
 }
 
-func (t *SearchIndexer) search(query string, limit int, attributes []string, matchingStrategy string) ([]schema.IndexedTorrent, error) {
+func (t *SearchIndexer) search(ctx context.Context, query string, limit int, attributes []string, matchingStrategy string) ([]schema.IndexedTorrent, error) {
 	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
-	if limit > 200 {
-		limit = 200
-	}
 	requestBody := map[string]interface{}{
 		"q":                    query,
 		"limit":                limit,
@@ -190,7 +202,8 @@ func (t *SearchIndexer) search(query string, limit int, attributes []string, mat
 		return nil, fmt.Errorf("failed to marshal search query: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	// the client's context: a guindex that gave up stops the search too
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

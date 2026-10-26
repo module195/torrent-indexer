@@ -1,6 +1,7 @@
 package meilisearch
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func TestSearchTorrentRetriesWithLastStrategy(t *testing.T) {
 	defer srv.Close()
 
 	si := NewSearchIndexer(srv.URL, "", "torrents")
-	got, err := si.SearchTorrent("the boys 4 temporada", 10)
+	got, err := si.SearchTorrent(context.Background(), "the boys 4 temporada", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +34,7 @@ func TestSearchTorrentRetriesWithLastStrategy(t *testing.T) {
 	}
 
 	strategies = nil
-	if _, err := si.SearchTorrentByIMDB("tt1190634", 10); err != nil {
+	if _, err := si.SearchTorrentByIMDB(context.Background(), "tt1190634", 10); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(strategies, []string{"all"}) {

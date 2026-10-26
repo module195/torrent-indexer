@@ -166,8 +166,24 @@ func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedT
 	if i.search == nil || i.search.BaseURL == "" || len(torrents) == 0 {
 		return torrents
 	}
+	// Upsert without empty fields, as the betor dump does: replacing the whole
+	// document would wipe the IMDb link the dump stored for the same hash, and
+	// the IMDb search of /search would stop finding the release. The similarity
+	// is left out too, it belongs to this request's query.
+	docs := make([]map[string]any, 0, len(torrents))
+	for _, it := range torrents {
+		if it.InfoHash == "" {
+			continue // Meilisearch fails the whole batch over one document without id
+		}
+		docs = append(docs, compactTorrentDocument(it))
+	}
+	if len(docs) == 0 {
+		return torrents
+	}
 	go func() {
-		_ = i.search.IndexTorrents(torrents)
+		if err := i.search.UpsertDocuments(docs); err != nil {
+			logging.Warn().Err(err).Int("documents", len(docs)).Msg("Failed to send torrents to Meilisearch")
+		}
 	}()
 	return torrents
 }
@@ -402,12 +418,14 @@ var accentReplacer = strings.NewReplacer(
 	"ç", "c",
 )
 
-// normalize removes accents, punctuation and lowercases
+// normalize removes accents and punctuation, and lowercases
 func normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
+	// "Star Wars: Andor" must still contain "star wars andor"
+	s = reQueryNoise.ReplaceAllString(s, " ")
 	s = accentReplacer.Replace(s)
 	// "Duna - Parte" would keep three spaces and stop matching "duna parte"
 	s = reWhitespace.ReplaceAllString(s, " ")
