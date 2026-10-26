@@ -126,7 +126,7 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 			"torrent-dos-filmes",
 			"comando_torrents",
 			//"via_filmes",
-			//"starck-filmes",
+			"starck-filmes",
 			//"bludv",
 			//"filme_torrent",
 			"rede_torrent",
