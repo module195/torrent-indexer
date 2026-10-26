@@ -146,6 +146,7 @@ func translationMinSimilarity(r *http.Request) float32 {
 }
 
 func writeSearchResults(w http.ResponseWriter, results []schema.IndexedTorrent) {
+	results = AddPublicTrackers(nil, nil, results)
 	response := map[string]interface{}{
 		"results": results,
 		"count":   len(results),
