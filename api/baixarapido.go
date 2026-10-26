@@ -80,7 +80,8 @@ var (
 	reBAExtension     = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`)
 	reBAGenericPrefix = regexp.MustCompile(`(?i)^[A-Z]+TORRENTS?\s+COM\s*[-.]?\s*`)
 	reBAUnsafe        = regexp.MustCompile(`(?i)^\[UNSAFE\]\s*`)
-	reBAEpisodePrefix = regexp.MustCompile(`(?i)^[\s.-]*EPISODIO[\s.-]*\d+[\s.-]*`)
+	reBAEpisodePrefix = regexp.MustCompile(`(?i)^[\s.-]*EPIS[OÓ]DIOS?[\s.-]*\d+(?:[\s.-]*E[\s.-]*\d+)*[\s.-]*`)
+	reBASeasonTail    = regexp.MustCompile(`(?i)[\s:–-]*\b\d{1,2}\s*[ªaº]?\s*temporada\b.*$`)
 	reBAFileTypeStart = regexp.MustCompile(`(?i)^(MP4|MKV|AVI)\s+`)
 	reBAAudioStart    = regexp.MustCompile(`(?i)^(LEGENDADO|DUBLADO|DUAL-AUDIO|DUAL)\s+`)
 	reBAAbbrevFirst   = regexp.MustCompile(`(?i)^(S\d|E\d|\d+P|WEB|HD|MKV|MP4)`)
@@ -764,6 +765,10 @@ func isSubtitleOnlyMagnet(dn string) bool {
 	return reBASubtitleWord.MatchString(dn) && !reBAVideoMarker.MatchString(dn)
 }
 
+// baixarApidoIMDBLookup busca o IMDb pelo nome (OMDb, depois TVmaze). Os
+// testes trocam por um stub.
+var baixarApidoIMDBLookup = fetchIMDBByTitle
+
 func getTorrentsBaixarApido(ctx context.Context, i *Indexer, link string) ([]schema.IndexedTorrent, error) {
 	doc, err := getDocument(ctx, i, link, baixarapido.URL)
 	if err != nil {
@@ -806,7 +811,13 @@ func parseBaixarApidoPage(doc *goquery.Document, link string) ([]schema.IndexedT
 		imdb = reBAIMDbID.FindString(bodyText)
 	}
 	if imdb == "" && h1 != "" {
-		imdb = fetchIMDBByTitle(h1, year)
+		// Série: o nome sem "- 2ª Temporada" e sem ano (o da temporada não
+		// é o da estreia). Com a temporada, TVmaze e OMDb não acham.
+		if series := reBASeasonTail.ReplaceAllString(h1, ""); series != h1 && series != "" {
+			imdb = baixarApidoIMDBLookup(series, "")
+		} else {
+			imdb = baixarApidoIMDBLookup(h1, year)
+		}
 	}
 	// Normaliza para URL completa
 	if imdb != "" && !strings.HasPrefix(imdb, "http") {
