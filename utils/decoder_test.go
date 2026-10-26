@@ -142,3 +142,45 @@ func TestDecodeStarckDataU(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeStarckXID(t *testing.T) {
+	tests := []struct {
+		name    string
+		xid     string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "Valid xid magnet link (base64 without padding)",
+			xid:  "b5AWM5FzYnlmbhRmMjVTY0MjO2gjN49DJ4QmdyRDMu1zP1cUc1xmM14Tc6hGYhlnYuRmLpYjawIDNwpDMlEjMyYGZuJjUkUzN3AmZ0Ij",
+			want: "magnet:?xt=urn:btih:e0bd6b939a13644237518abf0412f57f09bdcb88&dn=Lupin.2026.S04",
+		},
+		{
+			name:    "data-u value is not an xid",
+			xid:     "mb6ab5g78n4de63tb0:7d?2bx12t69=1bu55r94na2:86beft8fi50h0c:1c",
+			wantErr: true,
+		},
+		{
+			name:    "Empty xid",
+			xid:     "",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotErr := utils.DecodeStarckXID(tt.xid)
+			if gotErr != nil {
+				if !tt.wantErr {
+					t.Errorf("DecodeStarckXID() failed: %v", gotErr)
+				}
+				return
+			}
+			if tt.wantErr {
+				t.Fatal("DecodeStarckXID() succeeded unexpectedly")
+			}
+			if got != tt.want {
+				t.Errorf("DecodeStarckXID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -219,9 +219,9 @@ func main() {
 	indexerRoutes := map[string]http.HandlerFunc{
 		"baixarapido": respCache.Wrap("baixarapido", stats.Track("baixarapido", indexers.HandlerBaixarApidoIndexer)),
 		//"via_filmes": indexers.HandlerViaFilmesIndexer,
-		"comando_torrents": respCache.Wrap("comando_torrents", stats.Track("comando_torrents", indexers.HandlerComandoIndexer)),
-		"rede_torrent":     respCache.Wrap("rede_torrent", stats.Track("rede_torrent", indexers.HandlerRedeTorrentIndexer)),
-		"starck-filmes": indexers.HandlerStarckFilmesIndexer,
+		"comando_torrents":   respCache.Wrap("comando_torrents", stats.Track("comando_torrents", indexers.HandlerComandoIndexer)),
+		"rede_torrent":       respCache.Wrap("rede_torrent", stats.Track("rede_torrent", indexers.HandlerRedeTorrentIndexer)),
+		"starck-filmes":      respCache.Wrap("starck-filmes", stats.Track("starck-filmes", indexers.HandlerStarckFilmesIndexer)),
 		"torrent-dos-filmes": respCache.Wrap("torrent-dos-filmes", stats.Track("torrent-dos-filmes", indexers.HandlerTorrentDosFilmesIndexer)),
 		//"bludv": indexers.HandlerBluDVIndexer,
 		//"vaca_torrent": indexers.HandlerVacaTorrentIndexer,

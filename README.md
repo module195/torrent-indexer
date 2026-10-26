@@ -14,7 +14,7 @@ Visit [https://torrent-indexer.darklyn.org/](https://torrent-indexer.darklyn.org
 - [comando-torrents](https://comando.la/)
 - [bludv](https://bludvfilmes.tv/)
 - [torrent-dos-filmes](https://torrentdosfilmes.se/)
-- [starck-filmes](https://www.starckfilmes.fans/)
+- [starck-filmes](https://starckfilmes-v27.com/)
 - [rede-torrent](https://redetorrent.com/)
 - [vaca-torrent](https://vacatorrentmov.com/)
 

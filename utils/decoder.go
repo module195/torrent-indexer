@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"strings"
 )
 
 func DecodeAdLink(encodedStr string) (string, error) {
@@ -89,6 +90,37 @@ func DecodeStarckDataU(dataU string) (string, error) {
 	}
 
 	return unshuffled, nil
+}
+
+// DecodeStarckXID decodes the xid parameter of the starckfilmes download
+// buttons (https://filmedl.com/?xid=...): the same step-3 shuffle as data-u,
+// over the base64 of the magnet link. This is indexer-specific.
+func DecodeStarckXID(xid string) (string, error) {
+	if xid == "" {
+		return "", fmt.Errorf("empty xid value")
+	}
+
+	unshuffled, err := unshuffleStringByStep(xid, 3)
+	if err != nil {
+		return "", fmt.Errorf("unshuffle failed: %w", err)
+	}
+
+	// the site drops the base64 padding
+	unshuffled = strings.TrimRight(unshuffled, "=")
+	decoded, err := base64.RawStdEncoding.DecodeString(unshuffled)
+	if err != nil {
+		decoded, err = base64.RawURLEncoding.DecodeString(unshuffled)
+		if err != nil {
+			return "", fmt.Errorf("base64 decode failed: %w", err)
+		}
+	}
+
+	magnetLink := html.UnescapeString(strings.TrimSpace(string(decoded)))
+	if !IsMagnetLink(magnetLink) {
+		return "", fmt.Errorf("decoded string is not a valid magnet link: %.40q", magnetLink)
+	}
+
+	return magnetLink, nil
 }
 
 func IsMagnetLink(link string) bool {
