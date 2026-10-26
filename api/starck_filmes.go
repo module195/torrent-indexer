@@ -19,11 +19,13 @@ import (
 	"github.com/module195/torrent-indexer/utils"
 )
 
+// The site moves to a new "-vNN" domain from time to time and redirects the
+// old one (v26 → v27 with a 301), so an outdated default keeps working.
 var starck_filmes = IndexerMeta{
 	Label:       "starck_filmes",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://www.starckfilmes-v26.com"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://starckfilmes-v27.com/"),
 	SearchURL:   "?s=",
-	PagePattern: "page/%s",
+	PagePattern: "page/%s/",
 }
 
 func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Request) {
@@ -39,24 +41,28 @@ func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Requ
 	// supported query params: q, page, filter_results
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
+	if page == "" {
+		page = "1"
+	}
 
-	// URL encode query param
-	q = url.QueryEscape(q)
-	url := metadata.URL
+	baseURL := strings.TrimRight(metadata.URL, "/") + "/"
+	var targetURL string
+	if page != "1" {
+		targetURL = baseURL + fmt.Sprintf(metadata.PagePattern, page)
+	} else {
+		targetURL = baseURL
+	}
 	if q != "" {
-		url = fmt.Sprintf("%s%s%s", url, metadata.SearchURL, q)
-	} else if page != "" {
-		url = fmt.Sprintf(fmt.Sprintf("%s%s", url, metadata.PagePattern), page)
+		targetURL += metadata.SearchURL + url.QueryEscape(q)
 	}
 
-	// if search is empty, redirect to page 1
-	if q == "" {
-		url = fmt.Sprintf(fmt.Sprintf("%s%s", url, metadata.PagePattern), "1")
-	}
+	logging.InfoWithRequest(r).Str("target_url", targetURL).Msg("Processing indexer request")
 
-	logging.InfoWithRequest(r).Str("target_url", url).Msg("Processing indexer request")
-	resp, err := i.requester.GetDocument(ctx, url)
+	// Search results and the home change all the time: keep them out of the
+	// 24 h document cache, or new posts take a day to show up.
+	doc, err := getListingDocument(ctx, i, targetURL, baseURL)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		err = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		if err != nil {
@@ -65,51 +71,15 @@ func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Requ
 		i.metrics.IndexerErrors.WithLabelValues(metadata.Label).Inc()
 		return
 	}
-	defer resp.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		err = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		if err != nil {
-			logging.ErrorWithRequest(r).Err(err).Msg("Failed to encode error response")
-		}
-
-		i.metrics.IndexerErrors.WithLabelValues(metadata.Label).Inc()
-		return
-	}
-
-	var links []string
-	seen := make(map[string]bool)
-	doc.Find(".item").Each(func(i int, s *goquery.Selection) {
-		// Ignora slides (estão em .slide-item)
-		if s.Closest(".slide-item").Length() > 0 {
-			return
-		}
-		link, exists := s.Find("div.sub-item > a").Attr("href")
-		if !exists || link == "" {
-			return
-		}
-		// Ignora links de gênero/categoria
-		if strings.Contains(link, "?genre=") || strings.Contains(link, "?type=") {
-			return
-		}
-		if seen[link] {
-			return
-		}
-		seen[link] = true
-		links = append(links, link)
-	})
-
-	// if no links were indexed, expire the document in cache
+	links := extractStarckFilmesLinks(doc)
 	if len(links) == 0 {
-		_ = i.requester.ExpireDocument(ctx, url)
-		logging.DebugWithRequest(r).Str("url", url).Msg("No links found, expiring cache")
+		logging.DebugWithRequest(r).Str("url", targetURL).Msg("No links found")
 	}
 
 	// extract each torrent link
 	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
-		return getTorrentStarckFilmes(ctx, i, link, url)
+		return getTorrentStarckFilmes(ctx, i, link, baseURL)
 	})
 
 	// Apply post-processors
@@ -129,188 +99,234 @@ func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// extractStarckFilmesLinks returns the title pages listed on a home or search
+// page: the cards of the catalog, without the carousel on top (.slide-item)
+// and the "Você pode gostar" suggestions.
+func extractStarckFilmesLinks(doc *goquery.Document) []string {
+	var links []string
+	seen := make(map[string]bool)
+	doc.Find(".item").Each(func(_ int, s *goquery.Selection) {
+		if s.Closest(".slide-item, .post-suggestion").Length() > 0 {
+			return
+		}
+		link, exists := s.Find("div.sub-item > a").Attr("href")
+		if !exists || link == "" || !strings.Contains(link, "/catalog/") {
+			return
+		}
+		if seen[link] {
+			return
+		}
+		seen[link] = true
+		links = append(links, link)
+	})
+	return links
+}
+
 func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
-	var indexedTorrents []schema.IndexedTorrent
 	doc, err := getDocument(ctx, i, link, referer)
 	if err != nil {
 		return nil, err
 	}
 
-	date := getPublishedDateFromRawString(link)
+	page, releases := parseStarckFilmesPage(doc)
+	if len(releases) == 0 {
+		return nil, nil
+	}
+	page.Date = starckFilmesDateFromLink(link)
 
-	post := doc.Find(".post")
-	capa := post.Find(".capa")
-	title := capa.Find(".post-description > h2").Text()
-	post_buttons := post.Find(".post-buttons")
-	magnets := post_buttons.Find("a[href^=\"magnet\"]")
-	var magnetLinks []string
-	magnets.Each(func(i int, s *goquery.Selection) {
-		magnetLink, _ := s.Attr("href")
-		magnetLinks = append(magnetLinks, magnetLink)
-	})
-	dataUs := post_buttons.Find("a[data-u]")
-	dataUs.Each(func(i int, s *goquery.Selection) {
-		dataU, _ := s.Attr("data-u")
-		magnetLink, err := utils.DecodeStarckDataU(dataU)
-		if err != nil {
-			logging.Warn().Err(err).Str("data_u", dataU).Msg("Failed to decode data-u attribute, skipping")
-			return
-		}
-		magnetLinks = append(magnetLinks, magnetLink)
-	})
-
-	var audio []schema.Audio
-	var year string
-	var size []string
-	capa.Find(".post-description p, .post-description div, .post-description span").Each(func(i int, s *goquery.Selection) {
-		// pattern:
-		// Nome Original: 28 Weeks Later
-		// Lançamento: 2007
-		// Duração: 1h 40 min
-		// Gênero: Terror, Suspense, Ficção
-		// Formato: MKV
-		// Tamanho: 2.45 GB
-		// Qualidade de Video: 10
-		// Qualidade do Audio: 10
-		// Idioma: Português | Inglês
-		// Legenda: Português, Inglês, Espanhol
-		var text strings.Builder
-		s.Find("span").Each(func(i int, span *goquery.Selection) {
-			text.WriteString(span.Text())
-			text.WriteString(" ")
-		})
-		audio = append(audio, findAudioFromText(text.String())...)
-		y := findYearFromText(text.String(), title)
-		if y != "" {
-			year = y
-		}
-		size = append(size, findSizesFromText(text.String())...)
-	})
-
-	// IMDB
+	// The pages carry no IMDb link: look it up by the original title.
 	imdbLink := ""
-	// 1. Links diretos
-	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
-		href, _ := s.Attr("href")
-		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
-			imdbLink = m
-		}
-	})
-	// 2. Padrão ttXXXXXXX no texto
-	if imdbLink == "" {
-		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
-			imdbLink = m
-		}
+	searchTitle := page.OriginalTitle
+	if searchTitle == "" {
+		searchTitle = page.Title
 	}
-	// 3. Extrai título original da página
-	originalTitle := ""
-	doc.Find("span").Each(func(_ int, s *goquery.Selection) {
-		if strings.Contains(s.Text(), "Nome Original") {
-			if next := s.Next(); next != nil {
-				originalTitle = strings.TrimSpace(next.Text())
-			}
-		}
-	})
-	// 4. Fallback: busca por título original ou título limpo
-	if imdbLink == "" {
-		searchTitle := originalTitle
-		if searchTitle == "" {
-			searchTitle = regexp.MustCompile(`(?i)\s*[-:]?\s*(torrent|download|dublado|legendado|dual|audio|mkv|mp4|1080p|720p|4k|bluray|web-dl|webrip|camrip|x264|x265|hevc|aac|5\.1|remake|recomeco|recomeço).*$`).ReplaceAllString(title, "")
-			searchTitle = regexp.MustCompile(`(?i)\s*\b(19|20)\d{2}\b\s*`).ReplaceAllString(searchTitle, " ")
-			searchTitle = strings.TrimSpace(searchTitle)
-		}
-		if searchTitle != "" {
-			if fetched := fetchIMDBByTitle(searchTitle, year); fetched != "" {
-				imdbLink = fetched
-			}
-		}
-	}
-	// Normaliza para URL completa
-	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
-		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
+	if searchTitle != "" {
+		imdbLink = fetchIMDBByTitle(searchTitle, page.Year)
 	}
 
-	size = utils.StableUniq(size)
-
+	var indexedTorrents []schema.IndexedTorrent
 	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
 
-	// for each magnet link, create a new indexed torrent
-	for it, magnetLink := range magnetLinks {
-		it := it
-		go func(it int, magnetLink string) {
-    // Limpa espaço comum em magnets malformados
-    magnetLink = strings.TrimSpace(magnetLink)
-    magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
-    magnetLink = strings.ReplaceAll(magnetLink, "magnet:?%20", "magnet:?")
-
-    magnet, err := magnet.ParseMagnetUri(magnetLink)
-    if err != nil {
-        logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-        // always send so the collector loop below doesn't block forever
-        chanIndexedTorrent <- schema.IndexedTorrent{}
-        return
-    }
-			releaseTitle := strings.TrimSpace(magnet.DisplayName)
-			// url decode the title
-			releaseTitle, err = url.QueryUnescape(releaseTitle)
+	for _, rel := range releases {
+		go func(rel starckFilmesRelease) {
+			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, rel.InfoHash, rel.Trackers)
 			if err != nil {
-				logging.Error().Err(err).Str("title", releaseTitle).Msg("Failed to URL decode title")
-				releaseTitle = strings.TrimSpace(magnet.DisplayName)
+				logging.Error().Err(err).Str("info_hash", rel.InfoHash).Msg("Failed to get leechers and seeders")
 			}
-			infoHash := magnet.InfoHash.String()
-			trackers := magnet.Trackers
-			for i, tracker := range trackers {
-				unescapedTracker, err := url.QueryUnescape(tracker)
-				if err != nil {
-					logging.Error().Err(err).Str("tracker", tracker).Msg("Failed to URL decode tracker")
-				}
-				trackers[i] = strings.TrimSpace(unescapedTracker)
-			}
-			magnetAudio := getAudioFromTitle(releaseTitle, audio)
-
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
-			if err != nil {
-				logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to get leechers and seeders")
-			}
-
-			title := processTitle(title, magnetAudio)
-
-			// if the number of sizes is equal to the number of magnets, then assign the size to each indexed torrent in order
-			var mySize string
-			if len(size) == len(magnetLinks) {
-				mySize = size[it]
-			}
-			if mySize == "" {
+			if rel.Size == "" {
 				go func() {
-					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, magnetLink)
+					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, rel.MagnetLink)
 				}()
 			}
 
-			ixt := schema.IndexedTorrent{
-				Title:         releaseTitle,
-				OriginalTitle: title,
+			chanIndexedTorrent <- schema.IndexedTorrent{
+				Title:         rel.Title,
+				OriginalTitle: processTitle(page.Title, rel.Audio),
 				Details:       link,
-				Year:          year,
+				Year:          page.Year,
 				IMDB:          imdbLink,
-				Audio:         magnetAudio,
-				MagnetLink:    magnetLink,
-				Date:          date,
-				InfoHash:      infoHash,
-				Trackers:      trackers,
+				Audio:         rel.Audio,
+				MagnetLink:    rel.MagnetLink,
+				Date:          page.Date,
+				InfoHash:      rel.InfoHash,
+				Trackers:      rel.Trackers,
 				LeechCount:    peer,
 				SeedCount:     seed,
-				Size:          mySize,
+				Size:          rel.Size,
 			}
-			chanIndexedTorrent <- ixt
-		}(it, magnetLink)
+		}(rel)
 	}
 
-	for i := 0; i < len(magnetLinks); i++ {
-		it := <-chanIndexedTorrent
-		if it.InfoHash != "" {
-			indexedTorrents = append(indexedTorrents, it)
-		}
+	for range releases {
+		indexedTorrents = append(indexedTorrents, <-chanIndexedTorrent)
 	}
 
 	return indexedTorrents, nil
+}
+
+// starckFilmesPage is what a title page says about the whole title.
+type starckFilmesPage struct {
+	Title, OriginalTitle, Year string
+	Date                       time.Time
+}
+
+// starckFilmesRelease is one download button of a title page.
+type starckFilmesRelease struct {
+	Title, MagnetLink, InfoHash, Size string
+	Trackers                          []string
+	Audio                             []schema.Audio
+}
+
+// parseStarckFilmesPage reads a title page. The info block is a list of
+// "<span>Label:</span><span>value</span>" pairs; each version is a button in
+// .post-buttons with its own label ("Dual Áudio MKV Download 1080p (3.52 GB)").
+// The button links to an ad redirector whose xid parameter is the magnet link,
+// obfuscated (older pages used a plain magnet: href or a data-u attribute).
+func parseStarckFilmesPage(doc *goquery.Document) (starckFilmesPage, []starckFilmesRelease) {
+	capa := doc.Find(".post .capa")
+	page := starckFilmesPage{Title: strings.TrimSpace(capa.Find(".post-description > h2").First().Text())}
+
+	var audio []schema.Audio
+	var sizes []string
+	capa.Find(".post-description p").Each(func(_ int, s *goquery.Selection) {
+		spans := s.Find("span")
+		if spans.Length() < 2 {
+			return
+		}
+		label := strings.TrimSuffix(strings.TrimSpace(spans.First().Text()), ":")
+		value := strings.TrimSpace(spans.Eq(1).Text())
+		text := label + ": " + value
+		switch label {
+		case "Nome Original":
+			page.OriginalTitle = value
+		case "Lançamento":
+			// collections show a range ("1997-2009"): keep the first year
+			page.Year = reYearWord.FindString(value)
+		}
+		audio = append(audio, findAudioFromText(text)...)
+		sizes = append(sizes, findSizesFromText(text)...)
+	})
+	if page.Year == "" {
+		page.Year = reYearWord.FindString(page.Title)
+	}
+	sizes = utils.StableUniq(sizes)
+
+	type button struct{ magnetLink, label string }
+	var buttons []button
+	seen := map[string]bool{}
+	doc.Find(".post-buttons a").Each(func(_ int, s *goquery.Selection) {
+		magnetLink := starckFilmesButtonMagnet(s)
+		if magnetLink == "" || seen[magnetLink] {
+			return
+		}
+		seen[magnetLink] = true
+		label := strings.Join(strings.Fields(s.Closest(".btn-down").Find(".text").Text()), " ")
+		buttons = append(buttons, button{magnetLink, label})
+	})
+
+	var releases []starckFilmesRelease
+	for k, b := range buttons {
+		// some trackers come with "announce" machine-translated to "anunciar"
+		magnetLink := reTranslatedAnnounce.ReplaceAllString(b.magnetLink, "${1}announce$2")
+		magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+		if err != nil {
+			logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+			continue
+		}
+
+		releaseTitle := strings.TrimSpace(magnetParsed.DisplayName)
+		audioTitle := releaseTitle
+		if hint := bludvRuLabelAudio(b.label); hint != "" && !hasAudioMarker(releaseTitle) {
+			audioTitle += " " + hint
+		}
+
+		size := releaseSize(magnetLink, releaseTitle)
+		if size == "" {
+			size = sizeFromButtonLabel(b.label)
+		}
+		if size == "" && len(sizes) == len(buttons) {
+			size = sizes[k]
+		}
+
+		releases = append(releases, starckFilmesRelease{
+			Title:      withLabelTags(releaseTitle, b.label),
+			MagnetLink: magnetLink,
+			InfoHash:   magnetParsed.InfoHash.String(),
+			Trackers:   magnetParsed.Trackers,
+			Audio:      getAudioFromTitle(audioTitle, audio),
+			Size:       size,
+		})
+	}
+	return page, releases
+}
+
+// starckFilmesButtonMagnet returns the magnet link behind a download button,
+// or "".
+func starckFilmesButtonMagnet(a *goquery.Selection) string {
+	href := strings.TrimSpace(a.AttrOr("href", ""))
+	if strings.HasPrefix(href, "magnet:") {
+		return strings.NewReplacer("magnet:? ", "magnet:?", "magnet:?%20", "magnet:?").Replace(href)
+	}
+	if xid := reStarckXID.FindStringSubmatch(href); xid != nil {
+		raw, err := url.QueryUnescape(xid[1])
+		if err != nil {
+			raw = xid[1]
+		}
+		magnetLink, err := utils.DecodeStarckXID(raw)
+		if err != nil {
+			logging.Warn().Err(err).Str("href", href).Msg("Failed to decode xid, skipping")
+			return ""
+		}
+		return magnetLink
+	}
+	if dataU, ok := a.Attr("data-u"); ok {
+		magnetLink, err := utils.DecodeStarckDataU(dataU)
+		if err != nil {
+			logging.Warn().Err(err).Str("data_u", dataU).Msg("Failed to decode data-u attribute, skipping")
+			return ""
+		}
+		return magnetLink
+	}
+	return ""
+}
+
+// reStarckXID reads the xid parameter as is: url.Values would turn a "+" of
+// the base64 into a space.
+var reStarckXID = regexp.MustCompile(`[?&]xid=([^&#]+)`)
+
+// reStarckSlugDate matches the post date at the end of a title URL
+// (".../homem-aranha-um-novo-dia-2026-05-10-2026/").
+var reStarckSlugDate = regexp.MustCompile(`(\d{2}-\d{2}-\d{4})/?$`)
+
+// starckFilmesDateFromLink reads the post date (dd-mm-yyyy) at the end of the
+// slug. The generic parser tries yyyy-mm-dd first and would read the year of
+// the title plus the day and month ("2026-05-10") whenever the day is 12 or
+// less.
+func starckFilmesDateFromLink(link string) time.Time {
+	if m := reStarckSlugDate.FindStringSubmatch(strings.TrimSpace(link)); m != nil {
+		if date, err := time.Parse("02-01-2006", m[1]); err == nil {
+			return date.UTC()
+		}
+	}
+	return getPublishedDateFromRawString(link)
 }

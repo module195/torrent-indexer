@@ -27,6 +27,7 @@ type IndexerCapability struct {
 var ActiveIndexers = []IndexerCapability{
 	{Name: "torrent-dos-filmes", SupportsText: true},
 	{Name: "comando_torrents", SupportsText: true},
+	{Name: "starck-filmes", SupportsText: true},
 	{Name: "rede_torrent", SupportsText: true},
 	{Name: "torrentfilmeshds", SupportsText: true},
 	{Name: "bludv_ru", SupportsText: true, SupportsIMDb: true},
