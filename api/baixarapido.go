@@ -47,7 +47,7 @@ const (
 )
 
 // baixarApidoBudget é o tempo que o indexer gasta abrindo páginas antes de
-// responder com o que já tem; o multi corta em 9 s por padrão.
+// responder com o que já tem; o multi corta em 8 s por padrão.
 var baixarApidoBudget = func() time.Duration {
 	if ms, err := strconv.Atoi(utils.GetEnvOrDefault("INDEXER_BAIXARAPIDO_BUDGET_MS", "7000")); err == nil && ms > 0 {
 		return time.Duration(ms) * time.Millisecond
