@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -336,5 +337,83 @@ func Test_multiHandlerRunsQueriesInOrder(t *testing.T) {
 	}
 	if notStarted == 0 {
 		t.Fatal("test needs more jobs than workers")
+	}
+}
+
+func Test_multiHandlerLimitsCallsPerIndexer(t *testing.T) {
+	// two requests at once, 5 queries each: no indexer ever runs more than
+	// multiPerIndexer calls, counting both requests
+	var mu sync.Mutex
+	inflight, peak := 0, 0
+	h := NewMultiHandler(map[string]http.HandlerFunc{
+		"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			inflight++
+			peak = max(peak, inflight)
+			mu.Unlock()
+			time.Sleep(30 * time.Millisecond)
+			mu.Lock()
+			inflight--
+			mu.Unlock()
+			fakeIndexer()(w, r)
+		},
+	})
+	var wg sync.WaitGroup
+	for r := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, p := runMulti(t, h, "/indexers/multi?indexers=rede_torrent&deadline_ms=5000&q=a"+strconv.Itoa(r)+"&q=b&q=c&q=d&q=e")
+			for _, c := range p.Calls {
+				if c.State != "ok" {
+					t.Errorf("call %+v", c)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if peak > multiPerIndexer {
+		t.Fatalf("peak %d calls on one indexer, limit %d", peak, multiPerIndexer)
+	}
+	if peak < 2 {
+		t.Fatalf("calls should still run in parallel, peak %d", peak)
+	}
+}
+
+func Test_multiHandlerWarmsCacheWithQueuedCalls(t *testing.T) {
+	// a call still queued at the deadline runs in the background when
+	// WarmCache is on, and is dropped when it is off
+	for _, warm := range []bool{false, true} {
+		var ran atomic.Int32
+		release := make(chan struct{})
+		h := NewMultiHandler(map[string]http.HandlerFunc{
+			"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+				ran.Add(1)
+				<-release
+				fakeIndexer()(w, r)
+			},
+		})
+		h.WarmCache = warm
+		url := "/indexers/multi?indexers=rede_torrent&deadline_ms=500"
+		for i := range multiPerIndexer + 1 {
+			url += "&q=t" + strconv.Itoa(i)
+		}
+		_, p := runMulti(t, h, url)
+		if last := p.Calls[len(p.Calls)-1]; last.Reason != "not_started" {
+			t.Fatalf("warm=%v: last call %+v", warm, last)
+		}
+		close(release)
+		want := int32(multiPerIndexer)
+		if warm {
+			want++
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for ran.Load() < want && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		if got := ran.Load(); got != want {
+			t.Errorf("warm=%v: %d calls ran, want %d", warm, got, want)
+		}
 	}
 }
