@@ -438,6 +438,17 @@ func Test_AddSimilarityCheckQueryTarget(t *testing.T) {
 		// a year in the query is not part of the title
 		{"Duna 2021", []schema.IndexedTorrent{movies[0], movies[2]}, []string{"Duna 2021 1080p", "Duna 1080p Dublado"}},
 		{"Blade Runner 2049", []schema.IndexedTorrent{{Title: "Blade Runner 2049 (2017) 1080p"}}, []string{"Blade Runner 2049 (2017) 1080p"}},
+		// a title that is a year is the title, not a year to strip
+		{"1917 2019", []schema.IndexedTorrent{{Title: "1917.2019.1080p.BluRay.x264"}, {Title: "1917 (2019) BluRay 1080p Dublado"}},
+			[]string{"1917.2019.1080p.BluRay.x264", "1917 (2019) BluRay 1080p Dublado"}},
+		{"2012 2009", []schema.IndexedTorrent{{Title: "2012.2009.1080p.BluRay"}}, []string{"2012.2009.1080p.BluRay"}},
+		{"1923 temporada 2", []schema.IndexedTorrent{{Title: "1923.S02E01.2160p.WEB"}, {Title: "1923 2ª Temporada Completa"}},
+			[]string{"1923.S02E01.2160p.WEB", "1923 2ª Temporada Completa"}},
+		{"1923 2022", []schema.IndexedTorrent{{Title: "1923.S01E01.1080p.WEB"}}, []string{"1923.S01E01.1080p.WEB"}},
+		// the number of "Round 6" is the title; a pack of another season goes
+		{"Round 6 temporada 2", []schema.IndexedTorrent{
+			{Title: "Round.6.S02E01.1080p"}, {Title: "Round 6 2ª Temporada Completa"}, {Title: "Round 6 6ª Temporada"}},
+			[]string{"Round.6.S02E01.1080p", "Round 6 2ª Temporada Completa"}},
 	}
 	for _, c := range cases {
 		got := AddSimilarityCheck(nil, paramsReq(url.Values{"q": {c.q}}), slices.Clone(c.in))
@@ -460,16 +471,33 @@ func Test_AddSimilarityCheckQueryTarget(t *testing.T) {
 	}
 }
 
+func Test_extractMainTitleKeepsLeadingYear(t *testing.T) {
+	cases := map[string]string{
+		"1917.2019.1080p.BluRay":      "1917..",
+		"Duna 2021 1080p":             "Duna",
+		"The.Individual.2024.1080p":   "The.Individual..",
+		"2001 Uma Odisseia 1968 720p": "2001 Uma Odisseia",
+	}
+	for in, want := range cases {
+		if got := extractMainTitle(in); got != want {
+			t.Errorf("extractMainTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func Test_parseQueryTarget(t *testing.T) {
 	cases := map[string]queryTarget{
-		"the boys s05e03":                  {title: "the boys", season: 5, episode: 3},
-		"the boys temporada 5 episodio 3":  {title: "the boys", season: 5, episode: 3},
-		"the boys 5ª temporada":            {title: "the boys", season: 5},
-		"the boys s05":                     {title: "the boys", season: 5},
-		"duna parte 2 2024":                {title: "duna parte 2", year: "2024"},
-		"blade runner 2049":                {title: "blade runner 2049"},
-		"1917":                             {title: "1917"},
-		"2001 uma odisseia no espaco 1968": {title: "2001 uma odisseia no espaco", year: "1968"},
+		"the boys s05e03":                   {title: "the boys", season: 5, episode: 3},
+		"the boys temporada 5 episodio 3":   {title: "the boys", season: 5, episode: 3},
+		"the boys 5ª temporada":             {title: "the boys", season: 5},
+		"the boys s05":                      {title: "the boys", season: 5},
+		"duna parte 2 2024":                 {title: "duna parte 2", year: "2024"},
+		"blade runner 2049":                 {title: "blade runner 2049"},
+		"1917":                              {title: "1917"},
+		"round 6 temporada 2":               {title: "round 6", season: 2},
+		"station 19 temporada 7 episodio 1": {title: "station 19", season: 7, episode: 1},
+		"round 6 2ª temporada":              {title: "round 6", season: 2},
+		"2001 uma odisseia no espaco 1968":  {title: "2001 uma odisseia no espaco", year: "1968"},
 	}
 	for in, want := range cases {
 		if got := parseQueryTarget(in); got != want {
