@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/module195/torrent-indexer/logging"
@@ -48,7 +49,9 @@ type multiCall struct {
 	Count      int    `json:"count"`
 	DurationMs int64  `json:"duration_ms"`
 	Cache      string `json:"cache,omitempty"` // X-Cache of the sub-call
-	Reason     string `json:"reason,omitempty"`
+	// skipped: unknown_indexer | imdb_not_supported | text_not_supported;
+	// timeout: not_started when the call was still queued at the deadline
+	Reason string `json:"reason,omitempty"`
 }
 
 type multiTorrent struct {
@@ -131,33 +134,38 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// derive from a detached copy made up front.
 	base := r.Clone(context.WithoutCancel(r.Context()))
 
-	sem := make(chan struct{}, multiConcurrency)
+	// A fixed pool of workers takes the jobs in order (every indexer for q[0],
+	// then q[1], ...), so when there are more jobs than workers the ones left
+	// waiting at the deadline are the last queries, not random ones. One
+	// goroutine per job racing for a semaphore starts them in whatever order
+	// the scheduler picks.
+	var next atomic.Int64
+	running := make([]atomic.Bool, len(jobs))
 	done := make(chan multiResult, len(jobs))
-	for _, j := range jobs {
+	for range min(multiConcurrency, len(jobs)) {
 		go func() {
-			select {
-			case sem <- struct{}{}:
-			case <-deadlineCtx.Done():
-				return // never started; reported as timeout
+			for deadlineCtx.Err() == nil {
+				i := int(next.Add(1) - 1)
+				if i >= len(jobs) {
+					return
+				}
+				j := jobs[i]
+				running[i].Store(true)
+				res := runMultiCall(base, j, forward)
+				if time.Since(started) > deadline {
+					// The response already went out marking this call as timeout;
+					// this is the only place its real duration shows up.
+					logging.Warn().
+						Str("indexer", j.name).
+						Str("q", j.q).
+						Str("state", res.call.State).
+						Int("count", res.call.Count).
+						Int64("duration_ms", res.call.DurationMs).
+						Int64("deadline_ms", deadline.Milliseconds()).
+						Msg("multi sub-call finished after deadline")
+				}
+				done <- res
 			}
-			defer func() { <-sem }()
-			if deadlineCtx.Err() != nil {
-				return
-			}
-			res := runMultiCall(base, j, forward)
-			if time.Since(started) > deadline {
-				// The response already went out marking this call as timeout;
-				// this is the only place its real duration shows up.
-				logging.Warn().
-					Str("indexer", j.name).
-					Str("q", j.q).
-					Str("state", res.call.State).
-					Int("count", res.call.Count).
-					Int64("duration_ms", res.call.DurationMs).
-					Int64("deadline_ms", deadline.Milliseconds()).
-					Msg("multi sub-call finished after deadline")
-			}
-			done <- res
 		}()
 	}
 
@@ -179,11 +187,17 @@ collect:
 	}
 
 	partial := false
-	for _, j := range jobs {
-		if !finished[j.idx] {
-			partial = true
-			calls[j.idx].State = "timeout"
+	for i, j := range jobs {
+		if finished[j.idx] {
+			continue
+		}
+		partial = true
+		calls[j.idx].State = "timeout"
+		if running[i].Load() {
 			calls[j.idx].DurationMs = deadline.Milliseconds()
+		} else {
+			// never ran, so it says nothing about how fast the indexer is
+			calls[j.idx].Reason = "not_started"
 		}
 	}
 

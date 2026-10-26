@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -290,5 +291,50 @@ func Test_mergeMultiResultsPropagatesIMDB(t *testing.T) {
 	out := mergeMultiResults(calls, results)
 	if len(out) != 2 || out[1].IMDB != "tt0458339" {
 		t.Fatalf("got %+v", out)
+	}
+}
+
+func Test_multiHandlerRunsQueriesInOrder(t *testing.T) {
+	// more jobs than workers: the first query must run on every indexer
+	// before any later one starts, and what is still queued at the deadline
+	// comes back as not_started with no duration
+	release := make(chan struct{})
+	defer close(release)
+	routes := map[string]http.HandlerFunc{}
+	var names []string
+	for _, c := range ActiveIndexers {
+		if !c.SupportsText {
+			continue
+		}
+		names = append(names, c.Name)
+		routes[c.Name] = func(w http.ResponseWriter, r *http.Request) {
+			<-release
+		}
+	}
+	queries := (multiConcurrency + len(names) - 1) / len(names)
+	url := "/indexers/multi?deadline_ms=500&indexers=" + strings.Join(names, ",")
+	for i := 0; i <= queries; i++ {
+		url += "&q=titulo" + strconv.Itoa(i)
+	}
+	_, p := runMulti(t, NewMultiHandler(routes), url)
+
+	notStarted := 0
+	for i, c := range p.Calls {
+		if c.State != "timeout" {
+			t.Fatalf("call %d: %+v", i, c)
+		}
+		if i < multiConcurrency {
+			if c.Reason != "" || c.DurationMs == 0 {
+				t.Errorf("call %d (%s) should have started: %+v", i, c.Query, c)
+			}
+			continue
+		}
+		notStarted++
+		if c.Reason != "not_started" || c.DurationMs != 0 {
+			t.Errorf("call %d (%s) should be not_started: %+v", i, c.Query, c)
+		}
+	}
+	if notStarted == 0 {
+		t.Fatal("test needs more jobs than workers")
 	}
 }
