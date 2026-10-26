@@ -416,6 +416,12 @@ func mergeTorrent(a, b schema.IndexedTorrent) schema.IndexedTorrent {
 	if out.Details == "" && b.Details != "" {
 		out.Details = b.Details
 	}
+	if out.MagnetLink == "" && b.MagnetLink != "" {
+		out.MagnetLink = b.MagnetLink
+	}
+	if out.InfoHash == "" && b.InfoHash != "" {
+		out.InfoHash = b.InfoHash
+	}
 
 	// Union of audio tags
 	out.Audio = unionAudio(out.Audio, b.Audio)

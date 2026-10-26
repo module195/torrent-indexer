@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/module195/torrent-indexer/schema"
 )
@@ -415,5 +416,61 @@ func Test_multiHandlerWarmsCacheWithQueuedCalls(t *testing.T) {
 		if got := ran.Load(); got != want {
 			t.Errorf("warm=%v: %d calls ran, want %d", warm, got, want)
 		}
+	}
+}
+
+func Test_mergeMultiResultsPrefersRealTitle(t *testing.T) {
+	calls := []multiCall{{Indexer: "bludv"}, {Indexer: "rede_torrent"}}
+	results := map[int][]schema.IndexedTorrent{
+		0: {{Title: "[UNSAFE] Matrix.1999.1080p", InfoHash: "aa", SeedCount: 9, MagnetLink: "magnet:?xt=urn:btih:aa&dn=first"}},
+		1: {{Title: "Matrix (1999) 1080p", InfoHash: "AA", SeedCount: 3, Size: "2 GB"}},
+	}
+	out := mergeMultiResults(calls, results)
+	if len(out) != 1 {
+		t.Fatalf("got %+v", out)
+	}
+	m := out[0]
+	if m.Title != "Matrix (1999) 1080p" || m.SeedCount != 9 || m.Size != "2 GB" || m.MagnetLink == "" {
+		t.Fatalf("merge kept the wrong base: %+v", m)
+	}
+	if !slices.Equal(m.FoundIn, []string{"bludv", "rede_torrent"}) {
+		t.Fatalf("found_in %v", m.FoundIn)
+	}
+}
+
+func Test_multiHandlerLimitsAfterMerge(t *testing.T) {
+	var sawLimit atomic.Bool
+	h := NewMultiHandler(map[string]http.HandlerFunc{
+		"rede_torrent": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Has("limit") {
+				sawLimit.Store(true)
+			}
+			fakeIndexer(
+				schema.IndexedTorrent{Title: "a", InfoHash: "a1", SeedCount: 1},
+				schema.IndexedTorrent{Title: "b", InfoHash: "b1", SeedCount: 50},
+			)(w, r)
+		},
+	})
+	rec, p := runMulti(t, h, "/indexers/multi?q=matrix&indexers=rede_torrent&limit=1&sortBy=seed_count&sortDirection=desc")
+	if rec.Code != http.StatusOK || p.Count != 1 || p.Results[0].InfoHash != "b1" {
+		t.Fatalf("%d %+v", rec.Code, p)
+	}
+	if sawLimit.Load() {
+		t.Fatal("limit was forwarded to the sub-call")
+	}
+}
+
+func Test_multiQueriesCollapsesWhitespace(t *testing.T) {
+	got := multiQueries([]string{"  the  matrix ", "The Matrix", "the\tmatrix", "", "dune"})
+	if !slices.Equal(got, []string{"the matrix", "dune"}) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func Test_errorReasonKeepsUTF8(t *testing.T) {
+	msg := strings.Repeat("a", 199) + "ção"
+	got := errorReason([]byte(`{"error":"` + msg + `"}`))
+	if !utf8.ValidString(got) || len(got) > 200 || got != strings.Repeat("a", 199) {
+		t.Fatalf("got %q", got)
 	}
 }

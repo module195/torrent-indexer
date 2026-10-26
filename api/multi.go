@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/magnet"
@@ -169,11 +170,13 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	names := multiIndexerNames(params.Get("indexers"))
 	deadline := multiDeadline(params.Get("deadline_ms"))
 
-	// everything else (limit, sortBy, audio, year, imdb, ...) goes to each sub-call
+	// everything else (sortBy, audio, year, imdb, ...) goes to each sub-call.
+	// limit is applied once, after the merge: cutting each sub-call first
+	// would drop torrents that rank high only once seeds are merged.
 	forward := url.Values{}
 	for k, v := range params {
 		switch k {
-		case "q", "indexers", "deadline_ms":
+		case "q", "indexers", "deadline_ms", "limit":
 			continue
 		}
 		forward[k] = v
@@ -409,10 +412,18 @@ func errorReason(body []byte) string {
 	if json.Unmarshal(body, &e) != nil || e.Error == "" {
 		return ""
 	}
-	if len(e.Error) > 200 {
-		return e.Error[:200]
+	return truncateUTF8(e.Error, 200)
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a rune.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return e.Error
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // mergeMultiResults dedups by info_hash (falling back to the magnet's), in
@@ -430,7 +441,12 @@ func mergeMultiResults(calls []multiCall, results map[int][]schema.IndexedTorren
 			if pos, ok := byHash[key]; ok {
 				m := &out[pos]
 				sim := max(m.Similarity, t.Similarity)
-				m.IndexedTorrent = mergeTorrent(m.IndexedTorrent, t)
+				if isUnsafeTitle(m.Title) && !isUnsafeTitle(t.Title) && t.Title != "" {
+					// a real title beats the [UNSAFE] fallback, so keep this copy as the base
+					m.IndexedTorrent = mergeTorrent(t, m.IndexedTorrent)
+				} else {
+					m.IndexedTorrent = mergeTorrent(m.IndexedTorrent, t)
+				}
 				m.Similarity = sim
 				if !slices.Contains(m.FoundIn, c.Indexer) {
 					m.FoundIn = append(m.FoundIn, c.Indexer)
@@ -449,6 +465,10 @@ func mergeMultiResults(calls []multiCall, results map[int][]schema.IndexedTorren
 	return out
 }
 
+func isUnsafeTitle(title string) bool {
+	return reBAUnsafe.MatchString(title)
+}
+
 func torrentKey(t schema.IndexedTorrent) string {
 	if h := strings.ToLower(strings.TrimSpace(t.InfoHash)); h != "" {
 		return h
@@ -463,12 +483,13 @@ func torrentKey(t schema.IndexedTorrent) string {
 	return strings.ToLower(m.InfoHash.String())
 }
 
-// multiQueries trims, dedups (case-insensitively) and caps the q values.
+// multiQueries trims, collapses inner whitespace, dedups (case-insensitively)
+// and caps the q values.
 func multiQueries(raw []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, q := range raw {
-		q = strings.TrimSpace(q)
+		q = strings.Join(strings.Fields(q), " ")
 		k := strings.ToLower(q)
 		if q == "" || seen[k] {
 			continue
