@@ -28,6 +28,11 @@ services:
       - RESPONSE_CACHE_TTL=5m
       - REQUEST_COALESCE=true
 
+      ## Limita o scrape de seeders: sem isso cada magnet abre um socket UDP por
+      ## tracker, sem teto, e uma busca grande satura a rede/DNS do container
+      - TRACKER_SCRAPE_CONCURRENCY=64
+      - TRACKER_SCRAPE_MAX_ADDITIONAL=10
+
       ## Meilisearch: pesquisa no catálogo local (/search) e no dump do betor
       - MEILISEARCH_ADDRESS=http://meilisearch:7700
       - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-change-me-please}

@@ -155,7 +155,7 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	// Use io.Copy instead of io.ReadAll for better performance
 	_, err = io.Copy(&buf, body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response body for url %s: %w", url, err)
 	}
 	bodyByte = buf.Bytes()
 	servedByPlainClient := resp != nil

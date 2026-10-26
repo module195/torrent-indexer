@@ -34,6 +34,8 @@ var baixarapido = IndexerMeta{
 const (
 	// páginas de título abertas ao mesmo tempo (a busca traz até 30)
 	baixarApidoPageConcurrency = 8
+	// limite de uma página que segue depois do budget
+	baixarApidoPageTimeout = 90 * time.Second
 	// scrapes de tracker ao mesmo tempo
 	baixarApidoScrapeConcurrency = 16
 )
@@ -489,9 +491,13 @@ func fetchBaixarApidoPages(ctx context.Context, i *Indexer, links []string, dead
 	sem := make(chan struct{}, baixarApidoPageConcurrency)
 	for _, link := range links {
 		go func(link string) {
+			// a página abandonada no fim do budget precisa terminar para cair no
+			// cache; com o ctx da requisição ela era cancelada junto com a resposta
+			pageCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), baixarApidoPageTimeout)
+			defer cancel()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			torrents, err := getTorrentsBaixarApido(ctx, i, link)
+			torrents, err := getTorrentsBaixarApido(pageCtx, i, link)
 			if err != nil {
 				logging.Error().Err(err).Str("link", link).Msg("Failed to get torrents")
 			}
