@@ -221,7 +221,7 @@ func main() {
 		//"via_filmes": indexers.HandlerViaFilmesIndexer,
 		"comando_torrents": respCache.Wrap("comando_torrents", stats.Track("comando_torrents", indexers.HandlerComandoIndexer)),
 		"rede_torrent":     respCache.Wrap("rede_torrent", stats.Track("rede_torrent", indexers.HandlerRedeTorrentIndexer)),
-		//"starck-filmes": indexers.HandlerStarckFilmesIndexer,
+		"starck-filmes": indexers.HandlerStarckFilmesIndexer,
 		"torrent-dos-filmes": respCache.Wrap("torrent-dos-filmes", stats.Track("torrent-dos-filmes", indexers.HandlerTorrentDosFilmesIndexer)),
 		//"bludv": indexers.HandlerBluDVIndexer,
 		//"vaca_torrent": indexers.HandlerVacaTorrentIndexer,
