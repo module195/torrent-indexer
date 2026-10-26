@@ -257,3 +257,58 @@ func Test_rankBaixarApidoEntries(t *testing.T) {
 		}
 	}
 }
+
+func Test_parseBaixarApidoPage_seriesIMDB(t *testing.T) {
+	var calls [][2]string
+	orig := baixarApidoIMDBLookup
+	baixarApidoIMDBLookup = func(title, year string) string {
+		calls = append(calls, [2]string{title, year})
+		return "https://www.imdb.com/title/tt18332852/"
+	}
+	t.Cleanup(func() { baixarApidoIMDBLookup = orig })
+
+	// a 2ª temporada não tem sameAs: busca pelo nome da série, sem ano
+	s2, err := parseBaixarApidoPage(loadBaixarApidoFixture(t, "outlander-bomb-s2.html"), "https://baixarapido.com/baixar/outlander-blood-of-my-blood-2a-temporada/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s2) != 6 {
+		t.Fatalf("got %d releases, want 6", len(s2))
+	}
+	if len(calls) != 1 || calls[0] != [2]string{"Outlander: Blood of My Blood", ""} {
+		t.Errorf("lookup calls = %q", calls)
+	}
+	for _, it := range s2 {
+		if it.IMDB != "https://www.imdb.com/title/tt18332852/" {
+			t.Errorf("%s: imdb = %q", it.Title, it.IMDB)
+		}
+	}
+
+	// a 1ª temporada tem sameAs: não busca fora
+	calls = nil
+	s1, err := parseBaixarApidoPage(loadBaixarApidoFixture(t, "outlander-bomb-s1.html"), "https://baixarapido.com/baixar/outlander-blood-of-my-blood-1a-temporada/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 || len(s1) != 2 || s1[0].IMDB != "https://www.imdb.com/title/tt18332852/" {
+		t.Errorf("calls = %q, releases = %+v", calls, s1)
+	}
+	// "EPISODIOS-01-E-02.MKV." do dn sai do nome
+	if !strings.HasPrefix(s1[0].Title, "Outlander Blood of My Blood S01E01") {
+		t.Errorf("title = %q", s1[0].Title)
+	}
+}
+
+func Test_reBASeasonTail(t *testing.T) {
+	cases := map[string]string{
+		"Outlander: Blood of My Blood - 2ª Temporada":  "Outlander: Blood of My Blood",
+		"Outlander - Blood of My Blood - 1ª Temporada": "Outlander - Blood of My Blood",
+		"Lupin 4ª Temporada Completa":                  "Lupin",
+		"Oppenheimer":                                  "Oppenheimer",
+	}
+	for in, want := range cases {
+		if got := reBASeasonTail.ReplaceAllString(in, ""); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
