@@ -138,6 +138,9 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 			defer scraper.Close()
 
 			scraper.SetTimeout(500 * time.Millisecond)
+			// answers after the 500ms window are discarded, so a retry only
+			// keeps the socket open for nothing
+			scraper.SetRetryLimit(0)
 
 			res, err := scraper.Scrape([]byte(infoHash))
 			if err != nil {
@@ -175,6 +178,7 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 				}
 				return fallbackPeer.Leechers, fallbackPeer.Seeders, nil
 			}
+			cacheNoPeers(ctx, r, infoHash)
 			return 0, 0, fmt.Errorf("unable to get peers from trackers for infohash: %s (timeout)", infoHash)
 		case <-errChan:
 			responsesReceived++
@@ -209,5 +213,20 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 		return fallbackPeer.Leechers, fallbackPeer.Seeders, nil
 	}
 
+	cacheNoPeers(ctx, r, infoHash)
 	return 0, 0, fmt.Errorf("unable to get peers from trackers for infohash: %s", infoHash)
+}
+
+// noPeersTTL keeps a failed scrape as 0/0 for a while, so the next search for
+// the same title doesn't scrape every tracker again for a torrent nobody answers for.
+const noPeersTTL = 15 * time.Minute
+
+func cacheNoPeers(ctx context.Context, r *cache.Redis, infoHash string) {
+	peersJSON, err := json.Marshal(peers{})
+	if err != nil {
+		return
+	}
+	if err := r.SetWithExpiration(ctx, cache.Key(cache.KindPeers, infoHash, infoHash), peersJSON, noPeersTTL); err != nil {
+		logging.Debug().Err(err).Str("info_hash", infoHash).Msg("Failed to cache empty peer data")
+	}
 }

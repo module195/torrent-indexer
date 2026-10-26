@@ -7,6 +7,7 @@ package goscrape
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -116,7 +117,12 @@ func (g *Goscrape) connect() (net.Conn, uint64, error) {
 		binary.BigEndian.PutUint32(buf[8:], 0)    // action connect
 		binary.BigEndian.PutUint32(buf[12:], tid) // transaction id
 
-		g.conn, err = net.DialTimeout("udp", g.url, g.timeout)
+		var addr string
+		addr, err = resolveTracker(g.url, g.timeout)
+		if err != nil {
+			return nil, 0, err
+		}
+		g.conn, err = net.DialTimeout("udp", addr, g.timeout)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -168,6 +174,55 @@ func (g *Goscrape) connect() (net.Conn, uint64, error) {
 		g.session = time.Now()
 	}
 	return g.conn, g.connectionID, nil
+}
+
+// Tracker host names are resolved once and kept for a while: every scrape
+// used to do its own DNS lookup, and a search with many magnets sent hundreds
+// of lookups at once, enough to make the resolver time out for other names
+// (the log showed "lookup redis: i/o timeout").
+const (
+	trackerAddrTTL     = 30 * time.Minute
+	trackerAddrFailTTL = 10 * time.Minute
+)
+
+type trackerAddr struct {
+	addr    string
+	err     error
+	expires time.Time
+}
+
+var trackerAddrs sync.Map // "host:port" -> trackerAddr
+
+func resolveTracker(hostport string, timeout time.Duration) (string, error) {
+	if v, ok := trackerAddrs.Load(hostport); ok {
+		if a := v.(trackerAddr); time.Now().Before(a.expires) {
+			return a.addr, a.err
+		}
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return "", err
+	}
+	if net.ParseIP(host) != nil {
+		return hostport, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err == nil && len(ips) == 0 {
+		err = errors.New("no IPv4 address")
+	}
+	if err != nil {
+		var dnsErr *net.DNSError
+		// a lookup that only timed out says nothing about the tracker, so it isn't kept
+		if !errors.As(err, &dnsErr) || !dnsErr.IsTimeout {
+			trackerAddrs.Store(hostport, trackerAddr{err: err, expires: time.Now().Add(trackerAddrFailTTL)})
+		}
+		return "", err
+	}
+	addr := net.JoinHostPort(ips[0].String(), port)
+	trackerAddrs.Store(hostport, trackerAddr{addr: addr, expires: time.Now().Add(trackerAddrTTL)})
+	return addr, nil
 }
 
 // Scrape will scrape the given list of infohash and return a ScrapeResult struct

@@ -19,6 +19,8 @@ type Magnet struct {
 
 const xtPrefix = "urn:btih:"
 
+const brokenXtPrefix = "urn3abtih:"
+
 // Deprecated: Use ParseMagnetUri.
 var ParseMagnetURI = ParseMagnetUri
 
@@ -41,7 +43,11 @@ func ParseMagnetUri(uri string) (m Magnet, err error) {
 	}
 	q := u.Query()
 	xt := q.Get("xt")
-	m.InfoHash, err = parseInfohash(q.Get("xt"))
+	// some sites print "urn%3Abtih" with the "%" missing, which arrives here as "urn3Abtih"
+	if strings.HasPrefix(strings.ToLower(xt), brokenXtPrefix) {
+		xt = xtPrefix + xt[len(brokenXtPrefix):]
+	}
+	m.InfoHash, err = parseInfohash(xt)
 	if err != nil {
 		err = fmt.Errorf("error parsing infohash %q: %w", xt, err)
 		return
