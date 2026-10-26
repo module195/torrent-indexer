@@ -214,3 +214,46 @@ func Test_releaseHasQuality(t *testing.T) {
 		t.Error("1080p not matched")
 	}
 }
+
+func Test_parseBaixarApidoPage_originalTitle(t *testing.T) {
+	doc := loadBaixarApidoFixture(t, "longe-de-casa-4k.html")
+	torrents, err := parseBaixarApidoPage(doc, "https://baixarapido.com/baixar/homem-aranha-longe-de-casa-4k/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(torrents) != 7 {
+		t.Fatalf("got %d releases, want 7", len(torrents))
+	}
+	for _, it := range torrents {
+		if !strings.HasPrefix(it.OriginalTitle, "Spider-Man: Far from Home / Homem-Aranha") {
+			t.Errorf("original title = %q", it.OriginalTitle)
+		}
+	}
+	// a página do Oppenheimer tem o mesmo nome nas duas línguas: nada muda
+	opp, _ := parseBaixarApidoPage(loadBaixarApidoFixture(t, "opp.html"), "x")
+	if strings.Contains(opp[0].OriginalTitle, " / ") {
+		t.Errorf("original title = %q", opp[0].OriginalTitle)
+	}
+}
+
+func Test_baixarApidoPageTotal(t *testing.T) {
+	if got := baixarApidoPageTotal(loadBaixarApidoFixture(t, "busca-homem.html")); got != 16 {
+		t.Errorf("page total = %d, want 16", got)
+	}
+}
+
+func Test_rankBaixarApidoEntries(t *testing.T) {
+	entries := []baixarApidoEntry{
+		{url: "https://baixarapido.com/baixar/venom/", name: "Venom"},
+		{url: "https://baixarapido.com/baixar/homem-aranha-3/", name: "Homem-Aranha 3"},
+		{url: "https://baixarapido.com/baixar/lego-marvel/", name: "LEGO Marvel Super-Heróis"},
+		{url: "https://baixarapido.com/baixar/homem-aranha-longe-de-casa/"},
+	}
+	got := rankBaixarApidoEntries(entries, "Homem Aranha")
+	want := []string{"homem-aranha-3", "homem-aranha-longe-de-casa", "venom", "lego-marvel"}
+	for i, w := range want {
+		if !strings.Contains(got[i].url, "/"+w+"/") {
+			t.Fatalf("order = %+v", got)
+		}
+	}
+}

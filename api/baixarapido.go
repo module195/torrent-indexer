@@ -33,7 +33,13 @@ var baixarapido = IndexerMeta{
 
 const (
 	// páginas de título abertas ao mesmo tempo (a busca traz até 30)
-	baixarApidoPageConcurrency = 8
+	// (o robots.txt do site pede 10 s entre requisições e ele fica atrás da
+	// Cloudflare; com o cache, 4 bastam)
+	baixarApidoPageConcurrency = 4
+	// páginas de título abertas por chamada, no máximo
+	baixarApidoMaxPages = 30
+	// páginas da lista de busca lidas quando quem chamou não pediu uma
+	baixarApidoSearchPages = 3
 	// limite de uma página que segue depois do budget
 	baixarApidoPageTimeout = 90 * time.Second
 	// scrapes de tracker ao mesmo tempo
@@ -60,6 +66,8 @@ var (
 	reBASeasonName    = regexp.MustCompile(`(?i)\b(\d{1,2})\s*ª\s*temporada\b`)
 	reBATorrentSuffix = regexp.MustCompile(`(?i)\s*torrent.*$`)
 	reBAYearInParens  = regexp.MustCompile(`\((\d{4})\)`)
+	reBAPageCount     = regexp.MustCompile(`(?i)P[aá]gina\s+\d+\s+de\s+(\d+)`)
+	reBANonAlnum      = regexp.MustCompile(`[^a-z0-9]+`)
 	reBAIMDbID        = regexp.MustCompile(`tt\d{7,8}`)
 	reBAResolution    = regexp.MustCompile(`(?i)\b(\d{3,4}p)\b`)
 	reBAHasResolution = regexp.MustCompile(`(?i)\d{3,4}p`)
@@ -255,8 +263,20 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Sem page pedida, lê também as páginas seguintes da busca (com aspas,
+	// "Homem Aranha" tem 3, e "Longe de Casa" está na 2). Cada uma é um GET,
+	// e o pré-filtro decide o que abrir.
+	if bq.title != "" && r.URL.Query().Get("page") == "" && len(entries) > 0 {
+		entries = append(entries, fetchMoreBaixarApidoEntries(ctx, i, bq.title, baixarApidoPageTotal(doc))...)
+		entries = dedupBaixarApidoEntries(entries)
+	}
+
 	only4K := wants4K(r)
 	entries = filterBaixarApidoEntries(entries, bq, only4K)
+	entries = rankBaixarApidoEntries(entries, bq.title)
+	if len(entries) > baixarApidoMaxPages {
+		entries = entries[:baixarApidoMaxPages]
+	}
 	links := make([]string, 0, len(entries))
 	for _, e := range entries {
 		links = append(links, e.url)
@@ -338,6 +358,95 @@ func buildBaixarApidoFallbackQueries(title string) []string {
 	// "Homem-Aranha: Longe de Casa" -> "Homem Aranha Longe de Casa"
 	add(strings.NewReplacer(":", " ", "-", " ", "–", " ").Replace(noArticle))
 	return out
+}
+
+// baixarApidoPageTotal lê o "Página 1 de 16 (461 Títulos)" da lista.
+func baixarApidoPageTotal(doc *goquery.Document) int {
+	if m := reBAPageCount.FindStringSubmatch(doc.Text()); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 1
+}
+
+// fetchMoreBaixarApidoEntries lê, em paralelo, as páginas 2 até
+// baixarApidoSearchPages da busca. Página que falha só fica de fora.
+func fetchMoreBaixarApidoEntries(ctx context.Context, i *Indexer, term string, total int) []baixarApidoEntry {
+	last := min(total, baixarApidoSearchPages)
+	if last < 2 {
+		return nil
+	}
+	pages := make([][]baixarApidoEntry, last+1)
+	var wg sync.WaitGroup
+	for p := 2; p <= last; p++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			pageURL := baixarApidoSearchURL(baixarapido.URL, term, strconv.Itoa(p))
+			doc, err := getListingDocument(ctx, i, pageURL, baixarapido.URL)
+			if err != nil {
+				logging.Warn().Err(err).Str("url", pageURL).Msg("baixarapido: failed to read search page")
+				return
+			}
+			pages[p] = extractBaixarApidoEntries(doc)
+		}(p)
+	}
+	wg.Wait()
+	var out []baixarApidoEntry
+	for _, entries := range pages {
+		out = append(out, entries...)
+	}
+	return out
+}
+
+func dedupBaixarApidoEntries(entries []baixarApidoEntry) []baixarApidoEntry {
+	seen := map[string]bool{}
+	return utils.Filter(entries, func(e baixarApidoEntry) bool {
+		if seen[e.url] {
+			return false
+		}
+		seen[e.url] = true
+		return true
+	})
+}
+
+// baixarApidoWords normaliza para comparar nomes: minúsculas, sem acento, sem pontuação.
+func baixarApidoWords(s string) string {
+	return " " + strings.TrimSpace(reBANonAlnum.ReplaceAllString(normalizeForMatch(s), " ")) + " "
+}
+
+// rankBaixarApidoEntries põe na frente os resultados cujo nome tem todas as
+// palavras buscadas. A busca com aspas também casa a sinopse (Venom e LEGO
+// Marvel numa busca por "Homem Aranha"), e com o orçamento de tempo a ordem
+// decide o que entra. A ordem do site (por data) vale dentro de cada grupo.
+func rankBaixarApidoEntries(entries []baixarApidoEntry, term string) []baixarApidoEntry {
+	words := strings.Fields(baixarApidoWords(term))
+	if len(words) == 0 {
+		return entries
+	}
+	matches := func(e baixarApidoEntry) bool {
+		name := e.name
+		if name == "" {
+			name = strings.ReplaceAll(e.url, "-", " ")
+		}
+		name = baixarApidoWords(name)
+		for _, w := range words {
+			if !strings.Contains(name, " "+w+" ") {
+				return false
+			}
+		}
+		return true
+	}
+	out := make([]baixarApidoEntry, 0, len(entries))
+	var rest []baixarApidoEntry
+	for _, e := range entries {
+		if matches(e) {
+			out = append(out, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
+	return append(out, rest...)
 }
 
 // baixarApidoEntry é um resultado da busca ou da home.
@@ -567,8 +676,9 @@ func scrapeBaixarApidoSeeders(ctx context.Context, i *Indexer, torrents []schema
 
 // baixarApidoPageMeta são os dados estruturados da página de título.
 type baixarApidoPageMeta struct {
-	imdb string
-	year string
+	imdb     string
+	year     string
+	original string // "Título Original:" da ficha, sem ano nem qualidade
 }
 
 // readBaixarApidoPageMeta lê IMDb e ano do JSON-LD Movie e da microdata.
@@ -603,17 +713,19 @@ func readBaixarApidoPageMeta(doc *goquery.Document) baixarApidoPageMeta {
 			meta.year = y
 		}
 	}
-	if meta.year == "" {
-		doc.Find("td.text-light.fw-bold").EachWithBreak(func(_ int, s *goquery.Selection) bool {
-			if strings.EqualFold(strings.TrimSpace(s.Text()), "Título Original:") {
-				if m := reBAYearInParens.FindStringSubmatch(s.Next().Text()); m != nil {
-					meta.year = m[1]
-				}
-				return false
-			}
+	doc.Find("td.text-light.fw-bold").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		if !strings.EqualFold(strings.TrimSpace(s.Text()), "Título Original:") {
 			return true
-		})
-	}
+		}
+		value := strings.TrimSpace(s.Next().Text())
+		if m := reBAYearInParens.FindStringSubmatch(value); m != nil && meta.year == "" {
+			meta.year = m[1]
+		}
+		// "Spider-Man: Far from Home 4K (2019)" -> "Spider-Man: Far from Home"
+		value = reBAYearInParens.ReplaceAllString(value, "")
+		meta.original = strings.Trim(extractMainTitle(value), " -:(")
+		return false
+	})
 	return meta
 }
 
@@ -671,6 +783,13 @@ func parseBaixarApidoPage(doc *goquery.Document, link string) ([]schema.IndexedT
 
 	bodyText := doc.Text()
 	meta := readBaixarApidoPageMeta(doc)
+
+	// O título original vai junto do título da página: quem busca em inglês
+	// ("Spider-Man Far From Home") também casa no filtro de similaridade.
+	pageTitle := h1
+	if meta.original != "" && !strings.Contains(baixarApidoWords(h1), baixarApidoWords(meta.original)) {
+		pageTitle = meta.original + " / " + h1
+	}
 
 	// Year: dados estruturados primeiro, texto da página como último recurso
 	year := meta.year
@@ -794,7 +913,7 @@ func parseBaixarApidoPage(doc *goquery.Document, link string) ([]schema.IndexedT
 		magnetAudio := getAudioFromTitle(releaseTitle+" "+m.label, audio)
 
 		// Title processado - usa processTitle como torrent-dos-filmes
-		titleProcessed := processTitle(h1, magnetAudio)
+		titleProcessed := processTitle(pageTitle, magnetAudio)
 
 		// Size: o que o magnet diz de si (xl=, nome), o botão, a página
 		mySize := releaseSize(magnetLink, releaseTitle)

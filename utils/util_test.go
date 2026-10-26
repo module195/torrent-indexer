@@ -202,3 +202,10 @@ func TestStableUniqKeepsFirstOccurrence(t *testing.T) {
 		t.Errorf("StableUniq() = %v, want %v", got, want)
 	}
 }
+
+func TestRemoveKnownWebsites_adPhrase(t *testing.T) {
+	got := utils.RemoveKnownWebsites("[WWW BLUDV TV] Homem Aranha Longe de Casa 2019 (4K BluRay) Acesse o ORIGINAL WWW BLUDV TV 2160p")
+	if want := "Homem Aranha Longe de Casa 2019 (4K BluRay) 2160p"; got != want {
+		t.Errorf("RemoveKnownWebsites() = %q, want %q", got, want)
+	}
+}

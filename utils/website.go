@@ -55,6 +55,10 @@ var websitePatterns = []string{
 	`\[?\s*%s(\s*\])?`,
 }
 
+// reAdPhrases matches the ads some release names carry around the site name:
+// "[WWW.BLUDV.TV] Movie (4K BluRay) Acesse o ORIGINAL WWW.BLUDV.TV".
+var reAdPhrases = regexp.MustCompile(`(?i)\bacesse\s+o\s+original\b`)
+
 var regexesOnce sync.Once
 var regexes []*regexp.Regexp
 
@@ -92,6 +96,7 @@ func RemoveKnownWebsites(title string) string {
 	for _, re := range regexes {
 		title = re.ReplaceAllString(title, "")
 	}
-	title = strings.TrimSpace(title)
+	title = reAdPhrases.ReplaceAllString(title, "")
+	title = strings.Join(strings.Fields(title), " ")
 	return title
 }
