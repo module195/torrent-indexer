@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"cmp"
 	"fmt"
 	"html"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hbollon/go-edlib"
 	"github.com/module195/torrent-indexer/logging"
@@ -175,7 +177,14 @@ func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedT
 		if it.InfoHash == "" {
 			continue // Meilisearch fails the whole batch over one document without id
 		}
-		docs = append(docs, compactTorrentDocument(it))
+		doc := compactTorrentDocument(it)
+		if it.SeedCount == 0 && it.LeechCount == 0 {
+			// the tracker scrape failed or was skipped: keep the counts the
+			// dump or an earlier scrape stored, /search sorts by them
+			delete(doc, "seed_count")
+			delete(doc, "leech_count")
+		}
+		docs = append(docs, doc)
 	}
 	if len(docs) == 0 {
 		return torrents
@@ -316,13 +325,11 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	}
 	qNorm := normalize(q)
 
-	// Extract episode info from query (e.g. s01e05)
-	epRegex := reSxxEyy
-	qEpisode := epRegex.FindString(qNorm)
-
-	// Query without episode for title matching
-	qTitle := epRegex.ReplaceAllString(qNorm, "")
-	qTitle = strings.TrimSpace(qTitle)
+	// Season, episode and year in the query ("The Boys S05E03", "The Boys
+	// temporada 5 episodio 3", "Duna Parte Dois 2024") are checked against
+	// the release, not matched as text: the title match uses what is left
+	qq := parseQueryTarget(qNorm)
+	episodeQuery := qq.episode > 0
 
 	for i, it := range torrents {
 		// Extract main title (before year/quality patterns)
@@ -331,26 +338,19 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 
 		// Normalize for matching
 		combined := normalize(mainTitle + " " + originalTitle)
-		titleNorm := normalize(it.Title)
 
 		// Compute similarity
 		splitLength := 2
 		sim := edlib.JaccardSimilarity(combined, qNorm, splitLength)
 
-		// Check if main title matches (without episode); an empty title is a
-		// substring of every query, so it never counts as a match
-		titleMatches := combined != "" && (strings.Contains(combined, qTitle) || strings.HasPrefix(combined, qTitle) || strings.Contains(qTitle, combined))
+		// Check if main title matches (without season/episode/year); an empty
+		// title is a substring of every query, so it never counts as a match
+		titleMatches := combined != "" && qq.title != "" &&
+			(strings.Contains(combined, qq.title) || strings.Contains(qq.title, combined)) &&
+			releaseYearFits(it, qq.year)
 
-		if titleMatches {
-			if qEpisode != "" {
-				// Query has episode: boost only if title has that episode
-				if strings.Contains(titleNorm, qEpisode) {
-					sim = max(sim, 0.5)
-				}
-			} else {
-				// No episode in query: boost all matching titles
-				sim = max(sim, 0.5)
-			}
+		if titleMatches && releaseFitsQuery(it, qq) {
+			sim = max(sim, 0.5)
 		}
 
 		torrents[i].Similarity = sim
@@ -359,7 +359,7 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	// Filter low similarity, unless filter_results=false
 	if q != "" && filterResults(r) {
 		threshold := defaultMinSimilarity
-		if qEpisode != "" {
+		if episodeQuery {
 			// Query has episode: require either boost (0.5) or high base similarity
 			threshold = 0.45
 		}
@@ -367,12 +367,14 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 			threshold = minSim
 		}
 		torrents = utils.Filter(torrents, func(it schema.IndexedTorrent) bool {
-			// If query has episode, also check title contains the episode
-			if qEpisode != "" {
-				titleNorm := normalize(it.Title)
-				hasEpisode := strings.Contains(titleNorm, qEpisode)
-				// Must have episode match OR very high similarity
-				return hasEpisode && it.Similarity >= threshold || it.Similarity >= max(threshold, 0.48)
+			if episodeQuery {
+				// Must have the episode OR very high similarity; a release
+				// that names other episodes (S05E02 for S05E03) is never it,
+				// however much "temporada" it shares with the query
+				if releaseHasEpisode(it, qq.season, qq.episode) {
+					return it.Similarity >= threshold
+				}
+				return len(releaseInfoOf(it).episodes) == 0 && it.Similarity >= max(threshold, 0.48)
 			}
 			return it.Similarity >= threshold
 		})
@@ -382,9 +384,114 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 	return torrents
 }
 
+// queryTarget is what a search query asks for: the title, and the season,
+// episode and year when it names them (0 / "" otherwise).
+type queryTarget struct {
+	title           string
+	season, episode int
+	year            string
+}
+
+var (
+	reQuerySxxEyy   = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})\b`)
+	reQuerySxx      = regexp.MustCompile(`\bs(\d{1,2})\b`)
+	reQuerySeason   = regexp.MustCompile(`\b(?:temporada|season) (\d{1,2})\b|\b(\d{1,2}) ?(?:ª|º|a|o)? temporada\b`)
+	reQueryEpisode  = regexp.MustCompile(`\b(?:episodio|episode) (\d{1,3})\b`)
+	reQueryLastYear = regexp.MustCompile(` ((?:19|20)\d{2})$`)
+)
+
+// parseQueryTarget splits a normalized query into title, season, episode and
+// a trailing year. A number is only a year when it could be a release year
+// ("Blade Runner 2049" keeps its 2049).
+func parseQueryTarget(qNorm string) queryTarget {
+	var qt queryTarget
+	atoi := func(v string) int { n, _ := strconv.Atoi(v); return n }
+	rest := qNorm
+	if m := reQuerySxxEyy.FindStringSubmatch(rest); m != nil {
+		qt.season, qt.episode = atoi(m[1]), atoi(m[2])
+		rest = reQuerySxxEyy.ReplaceAllString(rest, " ")
+	}
+	if m := reQuerySeason.FindStringSubmatch(rest); m != nil {
+		qt.season = max(qt.season, atoi(m[1]+m[2]))
+		rest = reQuerySeason.ReplaceAllString(rest, " ")
+	}
+	if m := reQuerySxx.FindStringSubmatch(rest); m != nil {
+		qt.season = max(qt.season, atoi(m[1]))
+		rest = reQuerySxx.ReplaceAllString(rest, " ")
+	}
+	if m := reQueryEpisode.FindStringSubmatch(rest); m != nil {
+		qt.episode = max(qt.episode, atoi(m[1]))
+		rest = reQueryEpisode.ReplaceAllString(rest, " ")
+	}
+	rest = strings.TrimSpace(reWhitespace.ReplaceAllString(rest, " "))
+	if m := reQueryLastYear.FindStringSubmatch(rest); m != nil && atoi(m[1]) <= time.Now().Year()+1 {
+		qt.year = m[1]
+		rest = strings.TrimSpace(strings.TrimSuffix(rest, m[0]))
+	}
+	qt.title = rest
+	return qt
+}
+
+// releaseInfoOf reads season/episode from the release name, or from the
+// post title when the name says nothing about them.
+func releaseInfoOf(it schema.IndexedTorrent) releaseInfo {
+	info := parseReleaseInfo(it.Title)
+	if info.empty() {
+		info = parseReleaseInfo(it.OriginalTitle)
+	}
+	return info
+}
+
+// releaseHasEpisode reports whether the release names that very episode
+// (S05E03, S05E01-E04): a season pack does not count, as before.
+func releaseHasEpisode(it schema.IndexedTorrent, season, episode int) bool {
+	for _, e := range releaseInfoOf(it).episodes {
+		if (season == 0 || e.season == season) && e.from <= episode && episode <= e.to {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseFitsQuery reports whether a release whose title matches may get the
+// title boost: an episode query needs that episode; a season query, a
+// release of that season (or one that names no season at all).
+func releaseFitsQuery(it schema.IndexedTorrent, qt queryTarget) bool {
+	if qt.episode > 0 {
+		return releaseHasEpisode(it, qt.season, qt.episode)
+	}
+	if qt.season > 0 {
+		info := releaseInfoOf(it)
+		return info.empty() || info.hasSeason(qt.season)
+	}
+	return true
+}
+
+// releaseYearFits reports whether the release can be from the query's year:
+// a release that states years, none of them within a year of it, is another
+// work with the same name (Duna 1984 for "Duna 2021").
+func releaseYearFits(it schema.IndexedTorrent, year string) bool {
+	if year == "" {
+		return true
+	}
+	want, _ := strconv.Atoi(year)
+	years := reYearWord.FindAllString(stripAudioSuffix(it.Title)+" "+it.Year, -1)
+	if len(years) == 0 {
+		return true
+	}
+	for _, y := range years {
+		if n, _ := strconv.Atoi(y); n >= want-1 && n <= want+1 {
+			return true
+		}
+	}
+	return false
+}
+
 func sortBySimilarity(torrents []schema.IndexedTorrent) {
+	// int((j-i)*1000) tied scores less than 0.001 apart, an ordering that is
+	// not transitive
 	slices.SortFunc(torrents, func(i, j schema.IndexedTorrent) int {
-		return int((j.Similarity - i.Similarity) * 1000)
+		return cmp.Compare(j.Similarity, i.Similarity)
 	})
 }
 
