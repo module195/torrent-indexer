@@ -408,3 +408,72 @@ func Test_splitGluedRelease(t *testing.T) {
 		}
 	}
 }
+
+func Test_AddSimilarityCheckQueryTarget(t *testing.T) {
+	series := []schema.IndexedTorrent{
+		{Title: "The Boys S05E03 1080p WEB-DL", OriginalTitle: "The Boys - 5ª Temporada"},
+		{Title: "The.Boys.S05E03.2160p.AMZN.WEB-DL", OriginalTitle: "The Boys"},
+		{Title: "The Boys S05E02 1080p", OriginalTitle: "The Boys - 5ª Temporada"},
+		{Title: "The Boys 5ª Temporada Completa 1080p", OriginalTitle: "The Boys"},
+		{Title: "The Boys 4ª Temporada Completa 1080p", OriginalTitle: "The Boys"},
+	}
+	movies := []schema.IndexedTorrent{
+		{Title: "Duna 2021 1080p", OriginalTitle: "Dune"},
+		{Title: "Duna 1984 1080p", OriginalTitle: "Dune"},
+		{Title: "Duna 1080p Dublado", OriginalTitle: "Dune"},
+	}
+	cases := []struct {
+		q    string
+		in   []schema.IndexedTorrent
+		want []string
+	}{
+		// the episode written out in words is still an episode query
+		{"The Boys temporada 5 episodio 3", series, []string{
+			"The Boys S05E03 1080p WEB-DL", "The.Boys.S05E03.2160p.AMZN.WEB-DL",
+			"The Boys 5ª Temporada Completa 1080p"}},
+		// a season query keeps that season, packs named "5ª Temporada" too
+		{"The Boys S05", series, []string{
+			"The Boys S05E03 1080p WEB-DL", "The.Boys.S05E03.2160p.AMZN.WEB-DL",
+			"The Boys S05E02 1080p", "The Boys 5ª Temporada Completa 1080p"}},
+		// a year in the query is not part of the title
+		{"Duna 2021", []schema.IndexedTorrent{movies[0], movies[2]}, []string{"Duna 2021 1080p", "Duna 1080p Dublado"}},
+		{"Blade Runner 2049", []schema.IndexedTorrent{{Title: "Blade Runner 2049 (2017) 1080p"}}, []string{"Blade Runner 2049 (2017) 1080p"}},
+	}
+	for _, c := range cases {
+		got := AddSimilarityCheck(nil, paramsReq(url.Values{"q": {c.q}}), slices.Clone(c.in))
+		titles := titlesOf(got)
+		slices.Sort(titles)
+		want := slices.Clone(c.want)
+		slices.Sort(want)
+		if !slices.Equal(titles, want) {
+			t.Errorf("%q: kept %v, want %v", c.q, titles, want)
+		}
+	}
+
+	// a release stating another year gets no title boost (a remake)
+	sims := map[string]float32{}
+	for _, it := range AddSimilarityCheck(nil, paramsReq(url.Values{"q": {"Duna 2021"}, "filter_results": {"false"}}), slices.Clone(movies)) {
+		sims[it.Title] = it.Similarity
+	}
+	if sims["Duna 2021 1080p"] < 0.5 || sims["Duna 1984 1080p"] >= sims["Duna 2021 1080p"] {
+		t.Errorf("similarities %v: the 2021 release should be boosted above the 1984 one", sims)
+	}
+}
+
+func Test_parseQueryTarget(t *testing.T) {
+	cases := map[string]queryTarget{
+		"the boys s05e03":                  {title: "the boys", season: 5, episode: 3},
+		"the boys temporada 5 episodio 3":  {title: "the boys", season: 5, episode: 3},
+		"the boys 5ª temporada":            {title: "the boys", season: 5},
+		"the boys s05":                     {title: "the boys", season: 5},
+		"duna parte 2 2024":                {title: "duna parte 2", year: "2024"},
+		"blade runner 2049":                {title: "blade runner 2049"},
+		"1917":                             {title: "1917"},
+		"2001 uma odisseia no espaco 1968": {title: "2001 uma odisseia no espaco", year: "1968"},
+	}
+	for in, want := range cases {
+		if got := parseQueryTarget(in); got != want {
+			t.Errorf("parseQueryTarget(%q) = %+v, want %+v", in, got, want)
+		}
+	}
+}

@@ -288,7 +288,8 @@ func Test_SendToSearchIndexerUpserts(t *testing.T) {
 	if len(c.docs) != 1 || c.docs[0]["id"] != "a1" {
 		t.Fatalf("docs %v, want only the one with a hash", c.docs)
 	}
-	for _, key := range []string{"imdb", "similarity"} {
+	// no counts from the tracker scrape: keep the stored ones
+	for _, key := range []string{"imdb", "similarity", "seed_count", "leech_count"} {
 		if _, ok := c.docs[0][key]; ok {
 			t.Errorf("doc carries %q: %v", key, c.docs[0])
 		}

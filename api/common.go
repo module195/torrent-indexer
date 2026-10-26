@@ -31,7 +31,6 @@ var (
 	reEpisodeMarkers  = regexp.MustCompile(`(?i)\s*(S\d{1,2}E\d{1,2}|S\d{1,2}|temporada\s*\d+|episodio\s*\d+|episódio\s*\d+|season\s*\d+|episode\s*\d+|ep\.?\s*\d+)\s*`)
 	reYearWord        = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	reLeadingArticle  = regexp.MustCompile(`(?i)^(the|a|o|os|as|um|uma)\s+`)
-	reSxxEyy          = regexp.MustCompile(`(?i)s(\d+)e(\d+)`)
 	reIMDbID          = regexp.MustCompile(`^tt[0-9]{7,8}$`)
 	reQualitySuffix   = regexp.MustCompile(`(?i)(s\d+e\d+|1080p|720p|480p|4k|web-dl|webrip|bluray|hdtv|dual|dublado|legendado).*$`)
 	rePortugueseChars = regexp.MustCompile(`[áéíóúãõç]`)
