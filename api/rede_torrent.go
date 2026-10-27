@@ -1,14 +1,13 @@
 package handler
 
 import (
-	"html"
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +27,10 @@ var rede_torrent = IndexerMeta{
 	PagePattern: "pagina/%s/",
 }
 
+// redeTorrentPageConcurrency limita quantas páginas de título são abertas ao
+// mesmo tempo (a busca traz 20).
+const redeTorrentPageConcurrency = 6
+
 func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	metadata := rede_torrent
@@ -41,13 +44,7 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
 
-	// Build initial URL
-	targetURL := metadata.URL
-	if q != "" {
-		targetURL = fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, url.QueryEscape(q))
-	} else if page != "" {
-		targetURL = fmt.Sprintf(fmt.Sprintf("%s%s", metadata.URL, metadata.PagePattern), page)
-	}
+	targetURL := redeTorrentListingURL(metadata, q, page)
 
 	logging.InfoWithRequest(r).Str("target_url", targetURL).Msg("Processing indexer request")
 
@@ -60,9 +57,9 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Fallback: se não achou nada e é busca, tenta queries simplificadas
-	if len(links) == 0 && q != "" && page == "" {
+	if len(links) == 0 && q != "" && (page == "" || page == "1") {
 		for _, altQ := range buildRedeTorrentFallbackQueries(q) {
-			altURL := fmt.Sprintf("%s%s%s", metadata.URL, metadata.SearchURL, url.QueryEscape(altQ))
+			altURL := redeTorrentListingURL(metadata, altQ, "")
 			logging.Info().
 				Str("original_q", q).
 				Str("fallback_q", altQ).
@@ -84,7 +81,10 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 		_ = i.requester.ExpireDocument(ctx, targetURL)
 	}
 
+	sem := make(chan struct{}, redeTorrentPageConcurrency)
 	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
+		sem <- struct{}{}
+		defer func() { <-sem }()
 		return getTorrentsRedeTorrent(ctx, i, link, targetURL)
 	})
 
@@ -101,61 +101,53 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// redeTorrentListingURL monta a URL da busca ou da listagem. A busca vai para
+// index.php?busca=q, que é a 1ª página de /pesquisa/q/; as seguintes só
+// existem em /pesquisa/q/pagina/N/. O espaço vai como "+": com "%20" o
+// site respondeu 403.
+func redeTorrentListingURL(metadata IndexerMeta, q, page string) string {
+	base := strings.TrimRight(metadata.URL, "/") + "/"
+	paged := page != "" && page != "1"
+	switch {
+	case q != "" && paged:
+		return base + "pesquisa/" + url.QueryEscape(strings.ToLower(q)) + "/" + fmt.Sprintf(metadata.PagePattern, page)
+	case q != "":
+		return base + metadata.SearchURL + url.QueryEscape(q)
+	case paged:
+		return base + fmt.Sprintf(metadata.PagePattern, page)
+	}
+	return base
+}
+
 func fetchRedeTorrentLinks(ctx context.Context, i *Indexer, targetURL string) ([]string, error) {
-	resp, err := i.requester.GetDocument(ctx, targetURL)
+	// a busca e a home mudam o tempo todo: fora do cache de 24 h
+	doc, err := getListingDocument(ctx, i, targetURL, "")
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+	return extractRedeTorrentLinks(doc), nil
+}
 
-	doc, err := goquery.NewDocumentFromReader(resp)
-	if err != nil {
-		return nil, err
-	}
-
+// extractRedeTorrentLinks devolve as páginas de título de uma listagem: os
+// cards (a.cover-link). O domínio tem "torrent" no nome, então um seletor
+// por href pegaria também o menu (home, /filmes/, /qualidade/4k/...).
+func extractRedeTorrentLinks(doc *goquery.Document) []string {
 	var links []string
 	seen := map[string]bool{}
-
-	// Novo seletor (site atual)
-	doc.Find("a[href*='torrent']").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists || href == "" || seen[href] {
-			return
-		}
-		// Filtra links de navegação e pesquisa
-		if strings.Contains(href, "/genero/") || strings.Contains(href, "/pagina/") ||
-			strings.Contains(href, "/pesquisa/") || strings.Contains(href, "?") {
+	add := func(_ int, s *goquery.Selection) {
+		href := strings.TrimSpace(s.AttrOr("href", ""))
+		if href == "" || seen[href] {
 			return
 		}
 		seen[href] = true
 		links = append(links, href)
-	})
-
-	// Fallback: a.cover-link
-	if len(links) == 0 {
-		doc.Find("a.cover-link").Each(func(_ int, s *goquery.Selection) {
-			href, exists := s.Attr("href")
-			if !exists || href == "" || seen[href] {
-				return
-			}
-			seen[href] = true
-			links = append(links, href)
-		})
 	}
-
-	// Fallback antigo
+	doc.Find("a.cover-link[href]").Each(add)
 	if len(links) == 0 {
-		doc.Find(".capa_lista a").Each(func(_ int, s *goquery.Selection) {
-			href, exists := s.Attr("href")
-			if !exists || href == "" || seen[href] {
-				return
-			}
-			seen[href] = true
-			links = append(links, href)
-		})
+		// Fallback antigo
+		doc.Find(".capa_lista a").Each(add)
 	}
-
-	return links, nil
+	return links
 }
 
 // fetchIMDBByTitle busca IMDB por título usando APIs gratuitas
@@ -232,225 +224,248 @@ func min(a, b int) int {
 }
 
 func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
-	var indexedTorrents []schema.IndexedTorrent
 	doc, err := getDocument(ctx, i, link, referer)
 	if err != nil {
 		return nil, err
 	}
+
+	page, releases := parseRedeTorrentPage(doc)
+	if page.Title == "" {
+		return nil, fmt.Errorf("could not extract title from %s", link)
+	}
+	// sem magnet não vale a consulta ao OMDb
+	if len(releases) == 0 {
+		return nil, nil
+	}
+
+	imdbLink := page.IMDB
+	if imdbLink == "" {
+		imdbLink = fetchIMDBByTitle(redeTorrentIMDBSearch(page))
+	}
+	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
+		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
+	}
+
+	var indexedTorrents []schema.IndexedTorrent
+	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
+
+	for _, rel := range releases {
+		go func(rel redeTorrentRelease) {
+			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, rel.InfoHash, rel.Trackers)
+			if err != nil {
+				peer, seed = 0, 0
+			}
+			if rel.Size == "" {
+				go func() {
+					_, _ = i.magnetMetadataAPI.FetchMetadata(ctx, rel.MagnetLink)
+				}()
+			}
+
+			chanIndexedTorrent <- schema.IndexedTorrent{
+				Title:         rel.Title,
+				OriginalTitle: processTitle(page.Title, rel.Audio),
+				Details:       link,
+				Year:          page.Year,
+				IMDB:          imdbLink,
+				Audio:         rel.Audio,
+				MagnetLink:    rel.MagnetLink,
+				Date:          page.Date,
+				InfoHash:      rel.InfoHash,
+				Trackers:      rel.Trackers,
+				LeechCount:    peer,
+				SeedCount:     seed,
+				Size:          rel.Size,
+			}
+		}(rel)
+	}
+
+	for range releases {
+		indexedTorrents = append(indexedTorrents, <-chanIndexedTorrent)
+	}
+
+	return indexedTorrents, nil
+}
+
+// redeTorrentPage é o que a página diz do título inteiro.
+type redeTorrentPage struct {
+	Title, OriginalTitle, Year, IMDB string
+	Series                           bool
+	Date                             time.Time
+}
+
+// redeTorrentRelease é uma linha de download da página.
+type redeTorrentRelease struct {
+	Title, MagnetLink, InfoHash, Size string
+	Trackers                          []string
+	Audio                             []schema.Audio
+}
+
+var (
+	reRedeTitleTail   = regexp.MustCompile(`(?i)\s*(torrent|download|dublado|legendado|dual|audio).*$`)
+	reRedeYearParens  = regexp.MustCompile(`\s*\(\d{4}\)\s*`)
+	reRedeIMDBID      = regexp.MustCompile(`tt\d{7,8}`)
+	reRedeSeasonTitle = regexp.MustCompile(`(?i)[\s:–-]*\b(?:\d{1,2}\s*[ªaº]?\s*temporada|season\s*\d{1,2}|s\d{1,2})\b.*$`)
+)
+
+// parseRedeTorrentPage lê uma página de título. Os dados do título estão no
+// JSON-LD (Movie ou TVSeries: name, sameAs com o IMDb, datePublished) e na
+// ficha (.spec-text: "<small>Idioma / Áudio</small><strong>Português /
+// Inglês</strong>", sem dois-pontos). Cada versão é uma .download-row com o
+// rótulo (.download-name) e o magnet.
+func parseRedeTorrentPage(doc *goquery.Document) (redeTorrentPage, []redeTorrentRelease) {
+	var page redeTorrentPage
+	var ldName, ldYear string
+	doc.Find(`script[type="application/ld+json"]`).Each(func(_ int, s *goquery.Selection) {
+		var ld struct {
+			Type          string `json:"@type"`
+			Name          string `json:"name"`
+			SameAs        string `json:"sameAs"`
+			CopyrightYear string `json:"copyrightYear"`
+		}
+		if json.Unmarshal([]byte(s.Text()), &ld) != nil {
+			return
+		}
+		switch ld.Type {
+		case "Movie", "TVSeries":
+			ldName = strings.TrimSpace(ld.Name)
+			ldYear = ld.CopyrightYear
+			page.IMDB = reRedeIMDBID.FindString(ld.SameAs)
+			page.Series = ld.Type == "TVSeries"
+		}
+	})
 
 	// Title: h1 ou title tag - limpa para melhor similarity
 	title := strings.TrimSpace(doc.Find("h1").First().Text())
 	if title == "" {
 		title = strings.TrimSpace(doc.Find("title").Text())
 		title = regexp.MustCompile(`(?i)\s*[-|].*$`).ReplaceAllString(title, "")
-		title = strings.TrimSpace(title)
 	}
-	// Limpa título para similarity
-	title = regexp.MustCompile(`(?i)\s*(torrent|download|dublado|legendado|dual|audio).*$`).ReplaceAllString(title, "")
-	title = regexp.MustCompile(`\s*\(\d{4}\)\s*`).ReplaceAllString(title, " ")
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return nil, fmt.Errorf("could not extract title from %s", link)
+	title = reRedeTitleTail.ReplaceAllString(title, "")
+	title = strings.TrimSpace(reRedeYearParens.ReplaceAllString(title, " "))
+	if ldName != "" {
+		title = ldName
 	}
+	page.Title = html.UnescapeString(title)
+	page.OriginalTitle = strings.TrimSpace(doc.Find("p.original-title").First().Text())
 
-	// Year: de .info-pill time ou do texto
-	year := ""
-	doc.Find(".info-pill time[itemprop='datePublished']").Each(func(_ int, s *goquery.Selection) {
-		if year == "" {
-			year = strings.TrimSpace(s.Text())
-		}
-	})
-	if year == "" {
-		yearRe := regexp.MustCompile(`\b(19|20)\d{2}\b`)
-		if m := yearRe.FindString(doc.Text()); m != "" {
-			year = m
+	page.Year = strings.TrimSpace(doc.Find(".info-pill time[itemprop='datePublished']").First().Text())
+	if page.Year == "" {
+		page.Year = ldYear
+	}
+	if page.Year == "" {
+		page.Year = reYearWord.FindString(page.Title)
+	}
+	if page.IMDB == "" {
+		if href, ok := doc.Find("a[href*='imdb.com/title']").First().Attr("href"); ok {
+			page.IMDB = reRedeIMDBID.FindString(href)
 		}
 	}
+	page.Date = getPublishedDateFromMeta(doc)
 
-	// Date
-	date := getPublishedDateFromMeta(doc)
-
-	// Magnets: .download-row a[href^='magnet:']
-	var magnetLinks []string
-	doc.Find(".download-row a[href^='magnet:'], a[href^='magnet:']").Each(func(_ int, s *goquery.Selection) {
-		if href, exists := s.Attr("href"); exists && href != "" {
-			magnetLinks = append(magnetLinks, href)
-		}
-	})
-
-	// Audio: do título, original_title e body
 	var audio []schema.Audio
-	bodyText := doc.Text()
-	audio = findAudioFromText(title + " " + bodyText)
-	
-	// Detecta áudio pelo título se vazio
-	if len(audio) == 0 {
-		titleLower := strings.ToLower(title + " " + bodyText)
-		if strings.Contains(titleLower, "dual") {
-			audio = append(audio, "Português", "Inglês")
-		} else if strings.Contains(titleLower, "dublado") || strings.Contains(titleLower, "brazilian") ||
-			strings.Contains(titleLower, "pt-br") || strings.Contains(titleLower, "portugues") {
-			audio = append(audio, "Português")
-		} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
-			strings.Contains(titleLower, "english") {
-			audio = append(audio, "Inglês")
-		}
-	}
-
-	// Size: do texto e download-row
-	var size []string
-	// 1. Spec-text (tamanho do arquivo)
+	var sizes []string
 	doc.Find(".spec-text").Each(func(_ int, s *goquery.Selection) {
-		if strings.Contains(strings.ToLower(s.Find("small").Text()), "tamanho") {
-			text := s.Find("strong").Text()
-			// Captura todos os tamanhos (ex: "1.67 GB / 11.42 GB")
-			matches := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindAllString(text, -1)
-			size = append(size, matches...)
-		}
-	})
-	// 2. Download-row
-	doc.Find(".download-row, .download-name").Each(func(_ int, s *goquery.Selection) {
-		text := s.Text()
-		matches := regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|MB)`).FindAllString(text, -1)
-		size = append(size, matches...)
-	})
-	// Remove duplicados
-	seenSize := map[string]bool{}
-	var uniqueSize []string
-	for _, s := range size {
-		if !seenSize[s] && s != "" {
-			seenSize[s] = true
-			uniqueSize = append(uniqueSize, s)
-		}
-	}
-	size = uniqueSize
-
-	// IMDB
-	imdbLink := ""
-	// 1. Links diretos
-	doc.Find("a[href*='imdb.com/title']").Each(func(_ int, s *goquery.Selection) {
-		href, _ := s.Attr("href")
-		if m := regexp.MustCompile(`tt\d+`).FindString(href); m != "" {
-			imdbLink = m
-		}
-	})
-	// 2. Padrão ttXXXXXXX no texto
-	if imdbLink == "" {
-		if m := regexp.MustCompile(`tt\d{7,8}`).FindString(doc.Text()); m != "" {
-			imdbLink = m
-		}
-	}
-	// 3. Fallback: busca por título
-	if imdbLink == "" && title != "" {
-		if fetched := fetchIMDBByTitle(title, year); fetched != "" {
-			imdbLink = fetched
-		}
-	}
-	// Normaliza para URL completa
-	if imdbLink != "" && !strings.HasPrefix(imdbLink, "http") {
-		imdbLink = "https://www.imdb.com/title/" + imdbLink + "/"
-	}
-
-	if len(magnetLinks) == 0 {
-		return nil, nil
-	}
-
-	var chanIndexedTorrent = make(chan schema.IndexedTorrent)
-
-	for it, magnetLink := range magnetLinks {
-		it := it
-		go func(it int, magnetLink string) {
-			magnetLink = strings.TrimSpace(magnetLink)
-			magnetLink = strings.ReplaceAll(magnetLink, "&", "&")
-			magnetLink = strings.ReplaceAll(magnetLink, "magnet:? ", "magnet:?")
-
-			magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
-			if err != nil {
-				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
-				chanIndexedTorrent <- schema.IndexedTorrent{}
-				return
-			}
-
-			releaseTitle := magnetParsed.DisplayName
-			if releaseTitle == "" {
-				releaseTitle = title
-			}
-			// Limpa título como baixarapido
-			releaseTitle = cleanRedeTorrentTitle(releaseTitle)
-			infoHash := magnetParsed.InfoHash.String()
-			trackers := magnetParsed.Trackers
-			magnetAudio := getAudioFromTitle(releaseTitle, audio)
-
-			// Fallback: detecta áudio pelo título se vazio
-			if len(magnetAudio) == 0 {
-				titleLower := strings.ToLower(releaseTitle + " " + title)
-				if strings.Contains(titleLower, "dual") {
-					magnetAudio = append(magnetAudio, "Português", "Inglês")
-				} else if strings.Contains(titleLower, "brazilian") || strings.Contains(titleLower, "pt-br") ||
-					strings.Contains(titleLower, "portugues") || strings.Contains(titleLower, "dublado") {
-					magnetAudio = append(magnetAudio, "Português")
-				} else if strings.Contains(titleLower, "legendado") || strings.Contains(titleLower, "eng") ||
-					strings.Contains(titleLower, "english") {
-					magnetAudio = append(magnetAudio, "Inglês")
+		label := strings.ToLower(s.Find("small").Text())
+		value := strings.TrimSpace(s.Find("strong").Text())
+		switch {
+		case strings.Contains(label, "idioma") || strings.Contains(label, "áudio"):
+			for _, lang := range strings.Split(value, "/") {
+				if a := schema.GetAudioFromString(strings.TrimSpace(lang)); a != nil {
+					audio = append(audio, *a)
 				}
 			}
-
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
-			if err != nil {
-				peer, seed = 0, 0
-			}
-
-			titleProcessed := processTitle(title, magnetAudio)
-
-			var mySize string
-			// Associa size pelo índice só quando há um tamanho por magnet;
-			// senão o tamanho da página iria para releases de outra qualidade
-			if len(size) == len(magnetLinks) {
-				mySize = size[it]
-			}
-			// Fallback: size do magnet xl=
-			if mySize == "" {
-				if xl := regexp.MustCompile(`[?&]xl=(\d+)`).FindStringSubmatch(magnetLink); len(xl) > 1 {
-					if bytes, err := strconv.ParseInt(xl[1], 10, 64); err == nil && bytes > 0 {
-						gb := float64(bytes) / (1024 * 1024 * 1024)
-						if gb >= 1 {
-							mySize = fmt.Sprintf("%.2f GB", gb)
-						} else {
-							mySize = fmt.Sprintf("%.0f MB", float64(bytes)/(1024*1024))
-						}
-					}
-				}
-			}
-
-			ixt := schema.IndexedTorrent{
-				Title:         releaseTitle,
-				OriginalTitle: titleProcessed,
-				Details:       link,
-				Year:          year,
-				IMDB:          imdbLink,
-				Audio:         magnetAudio,
-				MagnetLink:    magnetLink,
-				Date:          date,
-				InfoHash:      infoHash,
-				Trackers:      trackers,
-				LeechCount:    peer,
-				SeedCount:     seed,
-				Size:          mySize,
-			}
-			chanIndexedTorrent <- ixt
-		}(it, magnetLink)
-	}
-
-	for i := 0; i < len(magnetLinks); i++ {
-		it := <-chanIndexedTorrent
-		if it.InfoHash != "" {
-			indexedTorrents = append(indexedTorrents, it)
+		case strings.Contains(label, "tamanho"):
+			sizes = append(sizes, findSizesFromText(value)...)
 		}
-	}
+	})
 
-	return indexedTorrents, nil
+	type row struct{ magnetLink, label string }
+	var rows []row
+	seen := map[string]bool{}
+	addRow := func(a *goquery.Selection, label string) {
+		href := strings.TrimSpace(a.AttrOr("href", ""))
+		if !strings.HasPrefix(href, "magnet:") || seen[href] {
+			return
+		}
+		seen[href] = true
+		rows = append(rows, row{href, strings.Join(strings.Fields(label), " ")})
+	}
+	doc.Find(".download-row").Each(func(_ int, s *goquery.Selection) {
+		label := s.Find(".download-name").Text()
+		s.Find("a[href^='magnet:']").Each(func(_ int, a *goquery.Selection) { addRow(a, label) })
+	})
+	doc.Find("a[href^='magnet:']").Each(func(_ int, a *goquery.Selection) { addRow(a, "") })
+
+	pageTitle := cleanRedeTorrentTitle(page.Title)
+	var releases []redeTorrentRelease
+	for k, rw := range rows {
+		magnetLink := strings.NewReplacer("magnet:? ", "magnet:?", "&amp;", "&").Replace(rw.magnetLink)
+		magnetParsed, err := magnet.ParseMagnetUri(magnetLink)
+		if err != nil {
+			logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")
+			continue
+		}
+
+		releaseTitle := cleanRedeTorrentTitle(magnetParsed.DisplayName)
+		if releaseTitle == "" {
+			releaseTitle = pageTitle
+		}
+		// dn só com episódio/qualidade ("S02E01 1080p", "T l s S03E13"): põe o título
+		if (isAbbreviatedTitle(releaseTitle) || needsTitlePrefix(releaseTitle)) && pageTitle != "" &&
+			!strings.Contains(strings.ToLower(releaseTitle), strings.ToLower(pageTitle)) {
+			releaseTitle = pageTitle + " " + releaseTitle
+		}
+		// dn colado ("OndeEstaWandaS02E01WEB-DL1080px264DUAL5.1"): o título da
+		// página sem a temporada mais o episódio; o rótulo completa a qualidade
+		if isGluedRelease(releaseTitle) {
+			if ep := reGluedMarker.FindString(releaseTitle); ep != "" && pageTitle != "" {
+				name := cleanRedeTorrentTitle(strings.TrimSpace(reRedeSeasonTitle.ReplaceAllString(page.Title, "")))
+				releaseTitle = name + " " + ep
+			}
+		}
+		releaseTitle = withLabelTags(releaseTitle, rw.label)
+
+		audioTitle := releaseTitle
+		if hint := bludvRuLabelAudio(rw.label); hint != "" && !hasAudioMarker(releaseTitle) {
+			audioTitle += " " + hint
+		}
+
+		size := releaseSize(magnetLink, releaseTitle)
+		if size == "" {
+			size = sizeFromButtonLabel(rw.label)
+		}
+		// tamanho da ficha pelo índice só com um por magnet; senão ele iria
+		// para um release de outra qualidade
+		if size == "" && len(sizes) == len(rows) {
+			size = sizes[k]
+		}
+
+		releases = append(releases, redeTorrentRelease{
+			Title:      releaseTitle,
+			MagnetLink: magnetLink,
+			InfoHash:   magnetParsed.InfoHash.String(),
+			Trackers:   magnetParsed.Trackers,
+			Audio:      getAudioFromTitle(audioTitle, audio),
+			Size:       size,
+		})
+	}
+	return page, releases
 }
 
+// redeTorrentIMDBSearch escolhe título e ano para achar o IMDb quando a página
+// não traz: o título original sem a temporada ("Lupin S04" -> "Lupin",
+// "Wheres Wanda? Season 2" -> "Wheres Wanda?"). Em série o ano é o da
+// temporada, não o da estreia, então vai sem ano.
+func redeTorrentIMDBSearch(page redeTorrentPage) (title, year string) {
+	title = page.OriginalTitle
+	if title == "" {
+		title = page.Title
+	}
+	if page.Series {
+		return strings.TrimSpace(reRedeSeasonTitle.ReplaceAllString(title, "")), ""
+	}
+	return title, page.Year
+}
 
 // buildRedeTorrentFallbackQueries gera buscas alternativas quando a original falha.
 func buildRedeTorrentFallbackQueries(q string) []string {
@@ -499,7 +514,7 @@ func cleanRedeTorrentTitle(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	s := html.UnescapeString(raw)
+	s := stripBaixarApidoTagBlock(html.UnescapeString(raw))
 
 	// Remove extensão
 	s = regexp.MustCompile(`(?i)\.(mkv|mp4|avi|torrent)$`).ReplaceAllString(s, "")
