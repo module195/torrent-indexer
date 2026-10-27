@@ -104,6 +104,9 @@ type MultiHandler struct {
 	// background, so their result lands in the response cache. Only worth it
 	// when the cache is on.
 	WarmCache bool
+	// Stats, when set, tells whether a reserve's primary is healthy; without
+	// it every primary counts as healthy.
+	Stats *IndexerStats
 }
 
 // NewMultiHandler takes the /indexers/<name> handlers keyed by indexer name.
@@ -115,13 +118,16 @@ func NewMultiHandler(routes map[string]http.HandlerFunc) *MultiHandler {
 type multiCall struct {
 	Indexer    string `json:"indexer"`
 	Query      string `json:"q"`
-	State      string `json:"state"` // ok | error | skipped | timeout
+	State      string `json:"state"` // ok | error | skipped | timeout | background
 	Status     int    `json:"status,omitempty"`
 	Count      int    `json:"count"`
 	DurationMs int64  `json:"duration_ms"`
 	Cache      string `json:"cache,omitempty"` // X-Cache of the sub-call
-	// skipped: unknown_indexer | imdb_not_supported | text_not_supported;
-	// timeout: not_started when the call was still queued at the deadline
+	// skipped: unknown_indexer | imdb_not_supported | text_not_supported |
+	// reserve (its primary is in the request and healthy);
+	// timeout: not_started when the call was still queued at the deadline;
+	// background: a secondary still running (or not_started) when the
+	// primaries were done, left to fill the response cache
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -142,6 +148,8 @@ type multiJob struct {
 	name  string
 	q     string
 	route http.HandlerFunc
+	// background: a secondary-tier call the response doesn't wait for
+	background bool
 }
 
 type multiResult struct {
@@ -169,6 +177,8 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	names := multiIndexerNames(params.Get("indexers"))
 	deadline := multiDeadline(params.Get("deadline_ms"))
+	// tiers=all calls the reserves too and waits for the secondaries
+	allTiers := params.Get("tiers") == "all"
 
 	// everything else (sortBy, audio, year, imdb, ...) goes to each sub-call.
 	// limit is applied once, after the merge: cutting each sub-call first
@@ -176,7 +186,7 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	forward := url.Values{}
 	for k, v := range params {
 		switch k {
-		case "q", "indexers", "deadline_ms", "limit":
+		case "q", "indexers", "deadline_ms", "limit", "tiers":
 			continue
 		}
 		forward[k] = v
@@ -193,11 +203,31 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				c.State, c.Reason = "skipped", "unknown_indexer"
 			} else if ok, reason := capab.Supports(q); !ok {
 				c.State, c.Reason = "skipped", reason
+			} else if !allTiers && capab.Tier == TierReserve && h.primaryCovers(capab.ReserveFor, names, q) {
+				c.State, c.Reason = "skipped", "reserve"
 			} else {
-				jobs = append(jobs, multiJob{idx: len(calls), name: name, q: q, route: route})
+				jobs = append(jobs, multiJob{
+					idx: len(calls), name: name, q: q, route: route,
+					background: !allTiers && capab.Tier == TierSecondary,
+				})
 			}
 			calls = append(calls, c)
 		}
+	}
+
+	// The response waits for the foreground calls only; with none (say,
+	// indexers=torrentfilmeshds) the secondaries are the foreground.
+	foreground := 0
+	for _, j := range jobs {
+		if !j.background {
+			foreground++
+		}
+	}
+	if foreground == 0 {
+		for i := range jobs {
+			jobs[i].background = false
+		}
+		foreground = len(jobs)
 	}
 
 	started := time.Now()
@@ -216,15 +246,23 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	done := make(chan multiResult, len(jobs))
 	go h.dispatch(deadlineCtx, base, jobs, forward, running, done, started, deadline)
 
+	background := make(map[int]bool, len(jobs))
+	for _, j := range jobs {
+		background[j.idx] = j.background
+	}
 	results := make(map[int][]schema.IndexedTorrent, len(jobs))
 	finished := make(map[int]bool, len(jobs))
+	foregroundLeft := foreground
 collect:
-	for len(finished) < len(jobs) {
+	for foregroundLeft > 0 {
 		select {
 		case res := <-done:
 			calls[res.idx] = res.call
 			results[res.idx] = res.torrents
 			finished[res.idx] = true
+			if !background[res.idx] {
+				foregroundLeft--
+			}
 		case <-deadlineCtx.Done():
 			break collect
 		}
@@ -236,6 +274,16 @@ collect:
 	partial := false
 	for i, j := range jobs {
 		if finished[j.idx] {
+			continue
+		}
+		if j.background {
+			// it keeps running (or, with WarmCache, gets queued) for the cache
+			calls[j.idx].State = "background"
+			if running[i].Load() {
+				calls[j.idx].DurationMs = time.Since(started).Milliseconds()
+			} else {
+				calls[j.idx].Reason = "not_started"
+			}
 			continue
 		}
 		partial = true
@@ -338,6 +386,23 @@ func (h *MultiHandler) dispatch(deadlineCtx context.Context, base *http.Request,
 			return
 		}
 	}
+}
+
+// primaryCovers reports whether primary will answer q in this request, so a
+// reserve that mirrors it can be skipped: it was asked for, has a route,
+// supports q and is healthy.
+func (h *MultiHandler) primaryCovers(primary string, names []string, q string) bool {
+	if primary == "" || !slices.Contains(names, primary) || h.routes[primary] == nil {
+		return false
+	}
+	capab, ok := capabilityFor(primary)
+	if !ok {
+		return false
+	}
+	if ok, _ := capab.Supports(q); !ok {
+		return false
+	}
+	return h.Stats.Healthy(primary)
 }
 
 // runMultiCall runs one indexer handler for q and decodes its JSON.
