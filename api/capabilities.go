@@ -20,19 +20,45 @@ type IndexerCapability struct {
 	Name         string
 	SupportsText bool
 	SupportsIMDb bool
+	Tier         IndexerTier
+	// ReserveFor names the primary a reserve mirrors. /indexers/multi calls
+	// the reserve only when that primary is not in the request or unhealthy.
+	ReserveFor string
 }
+
+// IndexerTier says how /indexers/multi treats an indexer.
+type IndexerTier string
+
+const (
+	// TierPrimary runs on every search and holds the response until it
+	// answers (or the deadline passes).
+	TierPrimary IndexerTier = "primary"
+	// TierSecondary runs on every search but doesn't hold the response: once
+	// the primaries are done it keeps going in the background, so its result
+	// reaches the response cache for the next search.
+	TierSecondary IndexerTier = "secondary"
+	// TierReserve serves the same posts and magnets as its ReserveFor primary
+	// (same backend on another domain), so it only runs as a fallback.
+	TierReserve IndexerTier = "reserve"
+)
 
 // ActiveIndexers lists the indexers advertised in "indexer_names", in the same
 // order. Keep both lists in sync (see Test_activeIndexersMatchIndexerNames).
+// Primaries come first: the merge keeps size, date and details from the first
+// indexer that has them, and clients read this order as priority.
+//
+// Tiers follow the 27/10/2026 comparison (RELATORIO-comparar-indexers.md):
+// bludv_ru, torrent-dos-filmes and comando_torrents publish the same posts
+// with the same magnets, and so do rede_torrent and baixarapido.
 var ActiveIndexers = []IndexerCapability{
-	{Name: "torrent-dos-filmes", SupportsText: true},
-	{Name: "comando_torrents", SupportsText: true},
-	{Name: "starck-filmes", SupportsText: true},
-	{Name: "rede_torrent", SupportsText: true},
-	{Name: "torrentfilmeshds", SupportsText: true},
-	{Name: "bludv_ru", SupportsText: true, SupportsIMDb: true},
-	{Name: "baixarapido", SupportsText: true},
-	{Name: "betor", SupportsIMDb: true},
+	{Name: "bludv_ru", SupportsText: true, SupportsIMDb: true, Tier: TierPrimary},
+	{Name: "rede_torrent", SupportsText: true, Tier: TierPrimary},
+	{Name: "starck-filmes", SupportsText: true, Tier: TierPrimary},
+	{Name: "betor", SupportsIMDb: true, Tier: TierPrimary},
+	{Name: "torrentfilmeshds", SupportsText: true, Tier: TierSecondary},
+	{Name: "torrent-dos-filmes", SupportsText: true, Tier: TierReserve, ReserveFor: "bludv_ru"},
+	{Name: "comando_torrents", SupportsText: true, Tier: TierReserve, ReserveFor: "bludv_ru"},
+	{Name: "baixarapido", SupportsText: true, Tier: TierReserve, ReserveFor: "rede_torrent"},
 }
 
 func capabilityFor(name string) (IndexerCapability, bool) {
@@ -183,11 +209,32 @@ func (s *IndexerStats) record(name string, status int, d time.Duration) {
 	st.next = (st.next + 1) % statsWindow
 }
 
+// unhealthyFor reports how long st stays out; 0 means healthy. Callers hold s.mu.
+func (s *IndexerStats) unhealthyFor(st *indexerStat, now time.Time) time.Duration {
+	if st == nil || st.consecutiveFailures < unhealthyAfter || now.Sub(s.started) < startupGrace {
+		return 0
+	}
+	return max(retryAfter(st.consecutiveFailures)-now.Sub(st.lastFailure), 0)
+}
+
+// Healthy reports whether name is currently offered as healthy in /sources?v=2.
+// A nil IndexerStats reports every indexer healthy.
+func (s *IndexerStats) Healthy(name string) bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unhealthyFor(s.byName[name], s.now()) == 0
+}
+
 // IndexerStatus is one entry of the "indexers" list in /sources?v=2.
 type IndexerStatus struct {
 	Name                string `json:"name"`
 	SupportsText        bool   `json:"supports_text"`
 	SupportsIMDb        bool   `json:"supports_imdb"`
+	Tier                string `json:"tier"`                  // primary | secondary | reserve
+	ReserveFor          string `json:"reserve_for,omitempty"` // the primary a reserve mirrors
 	Healthy             bool   `json:"healthy"`
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 	LastFailureAt       string `json:"last_failure_at,omitempty"` // RFC 3339, UTC
@@ -204,15 +251,16 @@ func (s *IndexerStats) Snapshot() []IndexerStatus {
 	now := s.now()
 	out := make([]IndexerStatus, 0, len(ActiveIndexers))
 	for _, c := range ActiveIndexers {
-		is := IndexerStatus{Name: c.Name, SupportsText: c.SupportsText, SupportsIMDb: c.SupportsIMDb, Healthy: true}
+		is := IndexerStatus{
+			Name: c.Name, SupportsText: c.SupportsText, SupportsIMDb: c.SupportsIMDb,
+			Tier: string(c.Tier), ReserveFor: c.ReserveFor, Healthy: true,
+		}
 		if st := s.byName[c.Name]; st != nil {
 			is.ConsecutiveFailures = st.consecutiveFailures
-			if st.consecutiveFailures >= unhealthyAfter && now.Sub(s.started) >= startupGrace {
-				if left := retryAfter(st.consecutiveFailures) - now.Sub(st.lastFailure); left > 0 {
-					is.Healthy = false
-					secs := int64((left + time.Second - 1) / time.Second)
-					is.RetryAfterS = &secs
-				}
+			if left := s.unhealthyFor(st, now); left > 0 {
+				is.Healthy = false
+				secs := int64((left + time.Second - 1) / time.Second)
+				is.RetryAfterS = &secs
 			}
 			if !st.lastFailure.IsZero() {
 				is.LastFailureAt = st.lastFailure.UTC().Format(time.RFC3339)

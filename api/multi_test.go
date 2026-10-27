@@ -314,7 +314,8 @@ func Test_multiHandlerRunsQueriesInOrder(t *testing.T) {
 		}
 	}
 	queries := (multiConcurrency + len(names) - 1) / len(names)
-	url := "/indexers/multi?deadline_ms=500&indexers=" + strings.Join(names, ",")
+	// tiers=all: every call is foreground, none skipped as a reserve
+	url := "/indexers/multi?deadline_ms=500&tiers=all&indexers=" + strings.Join(names, ",")
 	for i := 0; i <= queries; i++ {
 		url += "&q=titulo" + strconv.Itoa(i)
 	}
@@ -472,5 +473,112 @@ func Test_errorReasonKeepsUTF8(t *testing.T) {
 	got := errorReason([]byte(`{"error":"` + msg + `"}`))
 	if !utf8.ValidString(got) || len(got) > 200 || got != strings.Repeat("a", 199) {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func Test_activeIndexersTiers(t *testing.T) {
+	for _, c := range ActiveIndexers {
+		switch c.Tier {
+		case TierPrimary, TierSecondary:
+			if c.ReserveFor != "" {
+				t.Errorf("%s: only reserves have reserve_for", c.Name)
+			}
+		case TierReserve:
+			p, ok := capabilityFor(c.ReserveFor)
+			if !ok || p.Tier != TierPrimary {
+				t.Errorf("%s: reserve_for %q is not a primary", c.Name, c.ReserveFor)
+			}
+		default:
+			t.Errorf("%s: unknown tier %q", c.Name, c.Tier)
+		}
+	}
+}
+
+func Test_multiHandlerTiers(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	var slowRan atomic.Bool
+	routes := map[string]http.HandlerFunc{
+		"bludv_ru":           fakeIndexer(schema.IndexedTorrent{Title: "A", InfoHash: "aaaa"}),
+		"torrent-dos-filmes": fakeIndexer(schema.IndexedTorrent{Title: "A", InfoHash: "aaaa"}),
+		"comando_torrents":   fakeIndexer(schema.IndexedTorrent{Title: "A", InfoHash: "aaaa"}),
+		"rede_torrent":       fakeIndexer(schema.IndexedTorrent{Title: "B", InfoHash: "bbbb"}),
+		"baixarapido":        fakeIndexer(schema.IndexedTorrent{Title: "B", InfoHash: "bbbb"}),
+		"torrentfilmeshds": func(w http.ResponseWriter, r *http.Request) {
+			slowRan.Store(true)
+			<-release
+		},
+	}
+	all := "bludv_ru,torrent-dos-filmes,comando_torrents,rede_torrent,baixarapido,torrentfilmeshds"
+	states := func(p multiPayload) map[string]string {
+		out := map[string]string{}
+		for _, c := range p.Calls {
+			out[c.Indexer] = c.State + ":" + c.Reason
+		}
+		return out
+	}
+
+	// healthy primaries: reserves skipped, the slow secondary doesn't hold
+	// the response nor make it partial
+	stats := NewIndexerStats()
+	h := NewMultiHandler(routes)
+	h.Stats = stats
+	start := time.Now()
+	_, p := runMulti(t, h, "/indexers/multi?q=matrix&deadline_ms=5000&indexers="+all)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("waited for the secondary: %v", d)
+	}
+	got := states(p)
+	want := map[string]string{
+		"bludv_ru":           "ok:",
+		"rede_torrent":       "ok:",
+		"torrent-dos-filmes": "skipped:reserve",
+		"comando_torrents":   "skipped:reserve",
+		"baixarapido":        "skipped:reserve",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: got %q want %q", k, got[k], v)
+		}
+	}
+	if s := got["torrentfilmeshds"]; s != "background:" && s != "background:not_started" {
+		t.Errorf("torrentfilmeshds: %q", s)
+	}
+	if p.Partial || p.Count != 2 {
+		t.Errorf("partial=%v count=%d", p.Partial, p.Count)
+	}
+
+	// an unhealthy primary brings its reserves in; the other group stays as is
+	stats.started = time.Now().Add(-startupGrace)
+	for range unhealthyAfter {
+		stats.record("bludv_ru", http.StatusBadGateway, time.Second)
+	}
+	_, p = runMulti(t, h, "/indexers/multi?q=matrix&deadline_ms=5000&indexers="+all)
+	got = states(p)
+	if got["torrent-dos-filmes"] != "ok:" || got["comando_torrents"] != "ok:" || got["baixarapido"] != "skipped:reserve" {
+		t.Errorf("unhealthy bludv_ru: %v", got)
+	}
+
+	// a primary left out of the request: its reserve runs
+	_, p = runMulti(t, h, "/indexers/multi?q=matrix&indexers=baixarapido")
+	if got := states(p); got["baixarapido"] != "ok:" {
+		t.Errorf("baixarapido alone: %v", got)
+	}
+
+	// only a secondary asked for: it is the foreground
+	start = time.Now()
+	_, p = runMulti(t, h, "/indexers/multi?q=matrix&deadline_ms=500&indexers=torrentfilmeshds")
+	if got := states(p); got["torrentfilmeshds"] != "timeout:" || !p.Partial || time.Since(start) < 400*time.Millisecond {
+		t.Errorf("secondary alone: %v partial=%v", got, p.Partial)
+	}
+
+	// tiers=all: reserves run and the secondary is waited for
+	_, p = runMulti(t, NewMultiHandler(routes), "/indexers/multi?q=matrix&deadline_ms=500&tiers=all&indexers="+all)
+	got = states(p)
+	if got["comando_torrents"] != "ok:" || got["baixarapido"] != "ok:" || got["torrentfilmeshds"] != "timeout:" || !p.Partial {
+		t.Errorf("tiers=all: %v partial=%v", got, p.Partial)
+	}
+	if !slowRan.Load() {
+		t.Error("the secondary never ran")
 	}
 }

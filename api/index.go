@@ -124,18 +124,16 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 		Time:  currentTime,
 		Build: consts.GetBuildInfo(),
 		IndexerNames: []string{
+			// same order as ActiveIndexers (primaries, secondary, reserves)
+			"bludv_ru",
+			"rede_torrent",
+			"starck-filmes",
+			"betor",
+			"torrentfilmeshds",
 			"torrent-dos-filmes",
 			"comando_torrents",
-			//"via_filmes",
-			"starck-filmes",
-			//"bludv",
-			//"filme_torrent",
-			"rede_torrent",
-			//"vaca_torrent",
-			"torrentfilmeshds",
-			"bludv_ru",
 			"baixarapido",
-			"betor",
+			// disabled: via_filmes, bludv, filme_torrent, vaca_torrent
 		},
 		Endpoints: Endpoints{
 			IndexerGeneric: []EndpointDetail{
