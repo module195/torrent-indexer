@@ -987,11 +987,26 @@ func sizeNearMagnet(a *goquery.Selection) string {
 	return ""
 }
 
+// reBATagBlock casa o bloco de tags que o BaixaRápido põe antes do nome do
+// release no dn: "BAIXARAPIDO.COM-.TEMPORADA-04.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-."
+// ou "...-.EPISODIO-01.MKV.-LEGENDADO-.". O bloco termina no áudio seguido de "-.".
+var reBATagBlock = regexp.MustCompile(`(?i)^BAIXARAPIDO\.COM-\.\S*?-(?:DUBLADO|LEGENDADO|NACIONAL|DUAL-AUDIO)[A-Z-]*-\.`)
+
+// stripBaixarApidoTagBlock tira o bloco de tags do começo do dn do BaixaRápido.
+// As tags repetem o que o nome do release já diz, mas a de temporada
+// ("TEMPORADA-04") a limpeza não reconhece e ela ficava na frente do nome.
+func stripBaixarApidoTagBlock(s string) string {
+	if loc := reBATagBlock.FindStringIndex(s); loc != nil && loc[1] < len(s) {
+		return s[loc[1]:]
+	}
+	return s
+}
+
 func cleanBaixarApidoTitle(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	s := html.UnescapeString(raw)
+	s := stripBaixarApidoTagBlock(html.UnescapeString(raw))
 
 	// Remove extensão
 	s = reBAExtension.ReplaceAllString(s, "")
