@@ -13,6 +13,7 @@ import (
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/monitoring"
 	"github.com/module195/torrent-indexer/utils"
+	"golang.org/x/sync/singleflight"
 )
 
 type peers struct {
@@ -105,6 +106,30 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 		return leech, seed, nil
 	}
 
+	// two indexers (or two queries of one multi) often bring the same magnet
+	// at the same time; scrape it once and give both the answer
+	v, err, _ := peersFlight.Do(infoHash, func() (interface{}, error) {
+		leech, seed, err := scrapePeers(ctx, r, infoHash, trackers)
+		return peers{Leechers: leech, Seeders: seed}, err
+	})
+	p := v.(peers)
+	if m != nil && m.PeerScrapes != nil {
+		switch {
+		case err != nil:
+			m.PeerScrapes.WithLabelValues("failed").Inc()
+		case p.Seeders > 0:
+			m.PeerScrapes.WithLabelValues("seeders").Inc()
+		default:
+			m.PeerScrapes.WithLabelValues("no_seeders").Inc()
+		}
+	}
+	return p.Leechers, p.Seeders, err
+}
+
+var peersFlight singleflight.Group
+
+func scrapePeers(ctx context.Context, r *cache.Redis, infoHash string, trackers []string) (int, int, error) {
+	var err error
 	additionalTrackers := limitTrackers(getAdditionalTrackers(ctx, r), maxAdditionalTrackers)
 	allTrackers := make([]string, 0, len(trackers)+len(additionalTrackers))
 	allTrackers = append(allTrackers, trackers...)
@@ -117,50 +142,18 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 
 	for _, tracker := range allTrackers {
 		go func(tracker string) {
-			if scrapeSem != nil {
-				// results arriving after the 500ms window are discarded anyway,
-				// so don't queue longer than that
-				select {
-				case scrapeSem <- struct{}{}:
-					defer func() { <-scrapeSem }()
-				case <-time.After(500 * time.Millisecond):
-					errChan <- fmt.Errorf("scrape concurrency limit reached")
-					return
-				}
-			}
-			// get peers and seeds from redis first
-			scraper, err := New(tracker)
+			p, err := scrapeBatched(tracker, infoHash)
 			if err != nil {
 				errChan <- err
 				return
 			}
-
-			defer scraper.Close()
-
-			scraper.SetTimeout(500 * time.Millisecond)
-			// answers after the 500ms window are discarded, so a retry only
-			// keeps the socket open for nothing
-			scraper.SetRetryLimit(0)
-
-			res, err := scraper.Scrape([]byte(infoHash))
-			if err != nil {
-				errChan <- err
-				return
-			}
-			if len(res) == 0 {
-				errChan <- ErrResponse
-				return
-			}
-
-			peerChan <- peers{
-				Seeders:  int(res[0].Seeders),
-				Leechers: int(res[0].Leechers),
-			}
+			peerChan <- p
 		}(tracker)
 	}
 
-	// prefer the first non-zero response
-	timeout := time.After(500 * time.Millisecond)
+	// prefer the first non-zero response; the window covers the batch wait
+	// plus the tracker's own timeout
+	timeout := time.After(batchWindow + scrapeTimeout + 50*time.Millisecond)
 	var fallbackPeer peers
 	hasFallback := false
 	responsesReceived := 0

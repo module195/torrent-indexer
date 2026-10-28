@@ -13,6 +13,7 @@ import (
 
 	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -109,6 +110,7 @@ func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error)
 const trackersMemoryTTL = 10 * time.Minute
 
 var (
+	trackersFlight     singleflight.Group
 	trackersMemMu      sync.Mutex
 	trackersMem        []string
 	trackersMemExpires time.Time
@@ -124,8 +126,13 @@ func getAdditionalTrackers(ctx context.Context, r *cache.Redis) []string {
 	}
 	trackersMemMu.Unlock()
 
-	// Try to get dynamic trackers first
-	dynamicTrackers, err := fetchDynamicTrackers(ctx, r)
+	// Try to get dynamic trackers first. After a restart every scrape finds
+	// the memory copy empty at once; one fetch serves them all (the log
+	// showed 39 downloads of the list in the same second).
+	v, err, _ := trackersFlight.Do("list", func() (interface{}, error) {
+		return fetchDynamicTrackers(ctx, r)
+	})
+	dynamicTrackers, _ := v.([]string)
 	if err == nil && len(dynamicTrackers) > 0 {
 		logging.Debug().Int("count", len(dynamicTrackers)).Msg("Using dynamic trackers")
 		trackersMemMu.Lock()

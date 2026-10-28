@@ -334,7 +334,7 @@ func getTorrentsBaixandoTorrentsHD(ctx context.Context, i *Indexer, link, refere
 
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, infoHash, trackers)
 			if err != nil {
-				logging.Error().Err(err).Str("info_hash", infoHash).Msg("Failed to get leechers and seeders")
+				logging.Debug().Err(err).Str("info_hash", infoHash).Msg("Failed to get leechers and seeders")
 				peer, seed = 0, 0
 			}
 
