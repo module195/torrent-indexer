@@ -151,7 +151,7 @@ func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer strin
 		go func(rel starckFilmesRelease) {
 			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, rel.InfoHash, rel.Trackers)
 			if err != nil {
-				logging.Error().Err(err).Str("info_hash", rel.InfoHash).Msg("Failed to get leechers and seeders")
+				logging.Debug().Err(err).Str("info_hash", rel.InfoHash).Msg("Failed to get leechers and seeders")
 			}
 			if rel.Size == "" {
 				go func() {

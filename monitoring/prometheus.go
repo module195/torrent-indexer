@@ -10,6 +10,8 @@ type Metrics struct {
 	IndexerRequests *prometheus.CounterVec
 	CacheHits       *prometheus.CounterVec
 	CacheMisses     *prometheus.CounterVec
+	// tracker scrapes by outcome: seeders, no_seeders, failed
+	PeerScrapes *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -35,6 +37,10 @@ func NewMetrics() *Metrics {
 			Name: "cache_misses_total",
 			Help: "Number of cache misses",
 		}, []string{"cache"}),
+		PeerScrapes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "peer_scrapes_total",
+			Help: "Tracker scrapes for seeders, by outcome",
+		}, []string{"result"}),
 	}
 }
 
@@ -44,4 +50,5 @@ func (m *Metrics) Register() {
 	prometheus.MustRegister(m.IndexerRequests)
 	prometheus.MustRegister(m.CacheHits)
 	prometheus.MustRegister(m.CacheMisses)
+	prometheus.MustRegister(m.PeerScrapes)
 }
