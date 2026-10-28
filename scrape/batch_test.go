@@ -17,7 +17,7 @@ func fakeTracker(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	var scrapes, maxHashes atomic.Int32
 	go func() {
 		buf := make([]byte, 2048)
@@ -34,7 +34,7 @@ func fakeTracker(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
 				binary.BigEndian.PutUint32(out[0:], actionConnect)
 				binary.BigEndian.PutUint32(out[4:], tid)
 				binary.BigEndian.PutUint64(out[8:], 42)
-				conn.WriteTo(out, addr)
+				_, _ = conn.WriteTo(out, addr)
 			case actionScrap:
 				count := (n - 16) / 20
 				scrapes.Add(1)
@@ -47,7 +47,7 @@ func fakeTracker(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
 				for i := 0; i < count; i++ {
 					binary.BigEndian.PutUint32(out[8+12*i:], uint32(i+1))
 				}
-				conn.WriteTo(out, addr)
+				_, _ = conn.WriteTo(out, addr)
 			}
 		}
 	}()
