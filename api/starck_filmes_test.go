@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -120,4 +121,33 @@ func starckAudioNames(rel starckFilmesRelease) []string {
 		out = append(out, a.String())
 	}
 	return out
+}
+
+func Test_parseStarckFilmesPage_episodes(t *testing.T) {
+	// a season page lists one link per episode under "VERSÃO DUAL ÁUDIO"
+	page, rels := parseStarckFilmesPage(loadStarckFilmesDoc(t, "outlander-blood-of-my-blood-2-temporada-2026.html"))
+	if page.OriginalTitle != "Outlander: Blood of My Blood" || page.Year != "2026" {
+		t.Errorf("page: %+v", page)
+	}
+	if len(rels) != 7 {
+		t.Fatalf("got %d releases, want 7", len(rels))
+	}
+	for k, r := range rels {
+		want := fmt.Sprintf("Outlander.Blood.of.My.Blood.S02E%02d.WEB-DL.1080p.x264.DUAL.5.1-STARCKFILMES", k+1)
+		if r.Title != want || r.Size == "" || !slices.Equal(starckAudioNames(r), []string{"brazilian", "eng"}) {
+			t.Errorf("#%d: %q %q %v", k, r.Title, r.Size, starckAudioNames(r))
+		}
+	}
+	if rels[6].InfoHash != "cdf79036a719c0120c3e5bcd47cbd690f54114f9" {
+		t.Errorf("E07 hash %q", rels[6].InfoHash)
+	}
+}
+
+func Test_starckFilmesPageTTL(t *testing.T) {
+	if got := starckFilmesPageTTL("https://starckfilmes-v28.com/catalog/outlander-blood-of-my-blood-2-temporada-2026-19-09-2026/"); got != starckSeasonPageTTL {
+		t.Errorf("season page: %v", got)
+	}
+	if got := starckFilmesPageTTL("https://starckfilmes-v28.com/catalog/homem-aranha-um-novo-dia-2026-05-10-2026/"); got != 0 {
+		t.Errorf("movie page: %v", got)
+	}
 }
