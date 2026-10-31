@@ -39,6 +39,13 @@ var (
 // getDocument retrieves a document from the cache or makes a request to get it.
 // It first checks the Redis cache for the document body.
 func getDocument(ctx context.Context, i *Indexer, link, referer string) (*goquery.Document, error) {
+	return getDocumentWithTTL(ctx, i, link, referer, 0)
+}
+
+// getDocumentWithTTL is getDocument with its own cache expiration, for pages
+// that change under the same URL (a season page gets one more episode each
+// week). A ttl of 0 keeps the cache's default.
+func getDocumentWithTTL(ctx context.Context, i *Indexer, link, referer string, ttl time.Duration) (*goquery.Document, error) {
 	// try to get from redis first
 	docKey := cache.Key(cache.KindDoc, link, link)
 	docCache, err := i.redis.Get(ctx, docKey)
@@ -61,7 +68,11 @@ func getDocument(ctx context.Context, i *Indexer, link, referer string) (*goquer
 	}
 
 	// set cache
-	err = i.redis.Set(ctx, docKey, body)
+	if ttl > 0 {
+		err = i.redis.SetWithExpiration(ctx, docKey, body, ttl)
+	} else {
+		err = i.redis.Set(ctx, docKey, body)
+	}
 	if err != nil {
 		logging.Error().Err(err).Str("url", link).Msg("Failed to set document body in redis cache")
 	}

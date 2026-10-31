@@ -19,11 +19,11 @@ import (
 	"github.com/module195/torrent-indexer/utils"
 )
 
-// The site moves to a new "-vNN" domain from time to time and redirects the
-// old one (v26 → v27 with a 301), so an outdated default keeps working.
+// The site moves to a new "-vNN" domain from time to time and keeps serving or
+// redirecting the old ones, so an outdated default keeps working.
 var starck_filmes = IndexerMeta{
 	Label:       "starck_filmes",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://starckfilmes-v27.com/"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://starckfilmes-v28.com/"),
 	SearchURL:   "?s=",
 	PagePattern: "page/%s/",
 }
@@ -123,7 +123,7 @@ func extractStarckFilmesLinks(doc *goquery.Document) []string {
 }
 
 func getTorrentStarckFilmes(ctx context.Context, i *Indexer, link, referer string) ([]schema.IndexedTorrent, error) {
-	doc, err := getDocument(ctx, i, link, referer)
+	doc, err := getDocumentWithTTL(ctx, i, link, referer, starckFilmesPageTTL(link))
 	if err != nil {
 		return nil, err
 	}
@@ -329,4 +329,22 @@ func starckFilmesDateFromLink(link string) time.Time {
 		}
 	}
 	return getPublishedDateFromRawString(link)
+}
+
+// starckSeasonPageTTL is how long a season page stays in the document cache.
+// The site adds each new episode to the same page, under the same URL, so the
+// default 24 h would hide a new episode for up to a day.
+const starckSeasonPageTTL = time.Hour
+
+// reStarckSeasonSlug matches the slug of a season page
+// (".../outlander-blood-of-my-blood-2-temporada-2026-19-09-2026/").
+var reStarckSeasonSlug = regexp.MustCompile(`-\d+-temporada-`)
+
+// starckFilmesPageTTL returns the document cache TTL for a title page: short
+// for a season, the cache's default (0) for anything else.
+func starckFilmesPageTTL(link string) time.Duration {
+	if reStarckSeasonSlug.MatchString(link) {
+		return starckSeasonPageTTL
+	}
+	return 0
 }
