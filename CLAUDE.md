@@ -33,7 +33,7 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 ## Ferramentas do projeto (Claude Code)
 
 - Plugins (`.claude/settings.json`): gopls-lsp, security-guidance, pr-review-toolkit, commit-commands, claude-md-management, playwright, context7. Precisa de `gopls` no PATH: `go install golang.org/x/tools/gopls@latest`.
-- MCPs (`.mcp.json`): `gopls` (MCP do gopls), `meilisearch` (MCP nativo, só leitura) e `redis`. Variáveis: `MEILI_MCP_URL`, `MEILI_MCP_KEY`, `REDIS_MCP_URL`. Para criar a chave do Meilisearch: `scripts/meili-mcp-setup.sh`. O Redis MCP precisa de `uv` (`uvx`).
+- MCPs (`.mcp.json`): `gopls` (MCP do gopls), `meilisearch` (MCP nativo, só leitura) e `redis`. Variáveis: `MEILI_MCP_URL`, `MEILI_MCP_KEY`, `REDIS_MCP_URL`. Para criar a chave do Meilisearch: `scripts/meili-mcp-setup.sh`. O Redis MCP precisa de `uv` (`uvx`); na primeira vez o download leva ~30 s e pode estourar o timeout de conexão, então rode antes `uvx --from redis-mcp-server@latest redis-mcp-server --help`. Ele expõe ferramentas de escrita (`set`, `delete`...): aponte para um usuário Redis só leitura (ACL) fora do ambiente local.
 - Hook: `gofmt -w` em cada `.go` editado.
 - Skills: `novo-indexer-scraper`, `testar-busca-stack`.
 
