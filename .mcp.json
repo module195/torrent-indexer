@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "gopls": {
+      "command": "gopls",
+      "args": ["mcp"]
+    },
+    "meilisearch": {
+      "type": "http",
+      "url": "${MEILI_MCP_URL:-http://localhost:7700}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MEILI_MCP_KEY:-}"
+      }
+    },
+    "redis": {
+      "command": "uvx",
+      "args": ["--from", "redis-mcp-server@latest", "redis-mcp-server", "--url", "${REDIS_MCP_URL:-redis://localhost:6379/0}"]
+    }
+  }
+}
