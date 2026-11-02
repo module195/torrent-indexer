@@ -19,4 +19,5 @@ curl -fsS -X POST "${MEILI_URL}/keys" "${auth[@]}" -d '{
   "indexes": ["*"],
   "expiresAt": null
 }' | sed -n 's/.*"key":"\([^"]*\)".*/MEILI_MCP_KEY=\1/p'
+echo
 echo "MEILI_MCP_URL=${MEILI_URL}"
