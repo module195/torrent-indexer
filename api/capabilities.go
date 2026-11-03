@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -93,7 +95,9 @@ const (
 	// healthRetryAfter is how long an unhealthy indexer stays out before it is
 	// reported healthy again, so clients that skip unhealthy indexers retry
 	// it. Each failed retry doubles the interval (5m, 10m, 20m, 40m) up to
-	// healthRetryMax; a success resets the failure count.
+	// healthRetryMax; a success resets the failure count. Failures that land
+	// while the indexer is already out (clients still sending it on a stale
+	// /sources view) are not retries and don't double it.
 	healthRetryAfter = 5 * time.Minute
 	healthRetryMax   = time.Hour
 	// startupGrace keeps every indexer reported healthy right after start,
@@ -168,13 +172,23 @@ func (s *IndexerStats) Track(name string, next http.HandlerFunc) http.HandlerFun
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next(sw, r)
-		if r.Context().Err() != nil || sw.Header().Get("X-Cache") == "HIT" {
-			// client gave up, or a cached replay: says nothing about the site
+		if sw.Header().Get("X-Cache") == "HIT" {
+			// a cached replay says nothing about the site
 			return
 		}
 		status := sw.status
 		if status == 0 {
 			status = http.StatusOK
+		}
+		switch err := r.Context().Err(); {
+		case errors.Is(err, context.Canceled):
+			// the client gave up; the run was cut short by it, not by the site
+			return
+		case errors.Is(err, context.DeadlineExceeded):
+			// the run hit its own time limit (the 2-minute cap of the response
+			// cache and of /indexers/multi): the site, or FlareSolverr solving
+			// it, is too slow, which is a failure whatever was written
+			status = http.StatusGatewayTimeout
 		}
 		s.record(name, status, time.Since(start))
 	}
@@ -193,8 +207,14 @@ func (s *IndexerStats) record(name string, status int, d time.Duration) {
 		s.byName[name] = st
 	}
 	if isFailureStatus(status) {
+		now := s.now()
+		if st.consecutiveFailures >= unhealthyAfter && now.Sub(st.lastFailure) < retryAfter(st.consecutiveFailures) {
+			// already out: this call came from a client with a stale view, not
+			// from a retry, so it neither doubles the interval nor extends it
+			return
+		}
 		st.consecutiveFailures++
-		st.lastFailure = s.now()
+		st.lastFailure = now
 		return
 	}
 	st.consecutiveFailures = 0
