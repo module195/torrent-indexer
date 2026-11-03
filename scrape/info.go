@@ -44,11 +44,26 @@ func setPeersToCache(ctx context.Context, r *cache.Redis, infoHash string, peer,
 	if err != nil {
 		return err
 	}
-	err = r.SetWithExpiration(ctx, cache.Key(cache.KindPeers, infoHash, infoHash), peersJSON, 24*time.Hour)
+	err = r.SetWithExpiration(ctx, cache.Key(cache.KindPeers, infoHash, infoHash), peersJSON, peersTTL(seed))
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// peersTTL is how long a scrape result stays cached. A 0 often only means the
+// trackers that know the torrent answered after the scrape window while one
+// that doesn't answered 0/0 at once; keeping that for a day buried new
+// releases. Few seeders change fast too; many seeders are stable.
+func peersTTL(seeders int) time.Duration {
+	switch {
+	case seeders <= 0:
+		return noPeersTTL
+	case seeders <= 10:
+		return 2 * time.Hour
+	default:
+		return 12 * time.Hour
+	}
 }
 
 // Phase 2 (opt-in) scrape limits. Zero/unset keeps the previous behaviour

@@ -3,6 +3,8 @@ package requester
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +46,43 @@ const flaresolverrInitRetryInterval = time.Minute
 var (
 	ErrListSessions = fmt.Errorf("failed to list sessions")
 )
+
+// flaresolverrMaxBody bounds the page read back when FlareSolverr only
+// returns cookies and the page is fetched again with them.
+const flaresolverrMaxBody = 32 << 20
+
+// sessionPrefix names the sessions this process creates. Only sessions with
+// it are adopted at start: another indexer replica, or another app sharing
+// the solver, keeps its own (a session is one browser tab; two processes
+// using the same one at once step on each other).
+var sessionPrefix = func() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "local"
+	}
+	return "torrent-indexer-" + host + "-"
+}()
+
+func newSessionID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return sessionPrefix + hex.EncodeToString(b)
+}
+
+// cookieURL is the URL a solver cookie is stored under in a cookie jar. The
+// jar ignores URLs without an http(s) scheme, and the domain may come with a
+// leading dot (".site.com").
+func cookieURL(target *url.URL, domain string) *url.URL {
+	host := strings.TrimPrefix(domain, ".")
+	if host == "" {
+		host = target.Hostname()
+	}
+	scheme := target.Scheme
+	if scheme != "http" && scheme != "https" {
+		scheme = "https"
+	}
+	return &url.URL{Scheme: scheme, Host: host, Path: "/"}
+}
 
 func NewFlareSolverr(url string, timeoutMilli int, poolSize int) *FlareSolverr {
 	if poolSize <= 0 {
@@ -181,6 +220,9 @@ func (f *FlareSolverr) FillSessionPool() error {
 		return err
 	} else {
 		for _, session := range sessions {
+			if !strings.HasPrefix(session, sessionPrefix) {
+				continue // someone else's session
+			}
 			// Add available sessions to the pool
 			if len(f.sessionPool) < cap(f.sessionPool) {
 				f.sessionPool <- session
@@ -209,7 +251,7 @@ func (f *FlareSolverr) CreateSession() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	body := map[string]string{"cmd": "sessions.create"}
+	body := map[string]string{"cmd": "sessions.create", "session": newSessionID()}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return ""
@@ -277,10 +319,17 @@ func (f *FlareSolverr) ListSessions() ([]string, error) {
 		return nil, ErrListSessions
 	}
 
-	sessions := sessionsResponse["sessions"].([]interface{})
+	// unchecked type assertions here panicked on solvers that answer
+	// "sessions" in another shape
+	sessions, ok := sessionsResponse["sessions"].([]interface{})
+	if !ok {
+		return nil, ErrListSessions
+	}
 	var sessionIDs []string
 	for _, session := range sessions {
-		sessionIDs = append(sessionIDs, session.(string))
+		if id, ok := session.(string); ok {
+			sessionIDs = append(sessionIDs, id)
+		}
 	}
 
 	return sessionIDs, nil
@@ -389,6 +438,12 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 		return nil, resp.StatusCode == http.StatusInternalServerError, err
 	}
 
+	// the site's own status, as the solver saw it: a 5xx/403/429 page is a
+	// failure, the same rule the plain client follows
+	if isUpstreamFailure(response.Solution.Status) {
+		return nil, false, &UpstreamStatusError{URL: _url, StatusCode: response.Solution.Status}
+	}
+
 	// Check if "Under attack" is in the response
 	if strings.Contains(response.Solution.Response, "Under attack") {
 		return nil, false, fmt.Errorf("under attack")
@@ -412,8 +467,12 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 		if err != nil {
 			return nil, false, err
 		}
+		target, err := url.Parse(_url)
+		if err != nil {
+			return nil, false, err
+		}
 		for _, cookie := range response.Solution.Cookies {
-			cookieJar.SetCookies(&url.URL{Host: cookie.Domain}, []*http.Cookie{
+			cookieJar.SetCookies(cookieURL(target, cookie.Domain), []*http.Cookie{
 				{
 					Name:   cookie.Name,
 					Value:  cookie.Value,
@@ -437,11 +496,17 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 			return nil, false, err
 		}
 		defer secondResp.Body.Close()
+		if isUpstreamFailure(secondResp.StatusCode) {
+			return nil, false, &UpstreamStatusError{URL: _url, StatusCode: secondResp.StatusCode}
+		}
 
 		respByte := new(bytes.Buffer)
-		_, err = respByte.ReadFrom(secondResp.Body)
+		n, err := respByte.ReadFrom(io.LimitReader(secondResp.Body, flaresolverrMaxBody+1))
 		if err != nil {
 			return nil, false, err
+		}
+		if n > flaresolverrMaxBody {
+			return nil, false, fmt.Errorf("page larger than %d bytes: %s", flaresolverrMaxBody, _url)
 		}
 
 		// Return the body of the second request

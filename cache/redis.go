@@ -61,3 +61,27 @@ func (r *Redis) Del(ctx context.Context, key string) error {
 func (r *Redis) SetNX(ctx context.Context, key string, value []byte, expiration time.Duration) (bool, error) {
 	return r.client.SetNX(ctx, key, value, expiration).Result()
 }
+
+// HSet stores value under field of the hash key and sets the key's expiration.
+func (r *Redis) HSet(ctx context.Context, key, field string, value []byte, expiration time.Duration) error {
+	pipe := r.client.TxPipeline()
+	pipe.HSet(ctx, key, field, value)
+	pipe.Expire(ctx, key, expiration)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// HGetAll returns every field of the hash key (empty when it does not exist).
+func (r *Redis) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	return r.client.HGetAll(ctx, key).Result()
+}
+
+// HLen returns how many fields the hash key holds.
+func (r *Redis) HLen(ctx context.Context, key string) (int64, error) {
+	return r.client.HLen(ctx, key).Result()
+}
+
+// HDel removes fields from the hash key.
+func (r *Redis) HDel(ctx context.Context, key string, fields ...string) error {
+	return r.client.HDel(ctx, key, fields...).Err()
+}

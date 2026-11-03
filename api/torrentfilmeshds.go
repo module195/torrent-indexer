@@ -49,9 +49,12 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	start := time.Now()
 	defer func() {
 		i.metrics.IndexerDuration.WithLabelValues("torrentfilmeshds").Observe(time.Since(start).Seconds())
+		i.metrics.IndexerRequests.WithLabelValues("torrentfilmeshds").Inc()
 	}()
 
 	ctx := r.Context()
+	// this route has no respCache.Wrap, so nocache is honored here
+	fresh := wantsFresh(r)
 	q := r.URL.Query().Get("q")
 	page := r.URL.Query().Get("page")
 	if page == "" {
@@ -71,10 +74,17 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	cacheKey := fmt.Sprintf("tfhds:raw:%s:%s", q, page)
 
 	cacheStatus := "MISS"
+	// fetchedHere: this request ran the scrape (not a cache hit nor a
+	// follower of the singleflight), so it is the one that feeds Meilisearch
+	fetchedHere := false
 
 	// 1. Tenta cache de resultado (Redis)
-	raw, err := i.redis.Get(ctx, cacheKey)
-	if err == nil && len(raw) > 0 {
+	var raw []byte
+	var err error
+	if !fresh {
+		raw, err = i.redis.Get(ctx, cacheKey)
+	}
+	if !fresh && err == nil && len(raw) > 0 {
 		i.metrics.CacheHits.WithLabelValues("tfhds_result").Inc()
 		cacheStatus = "HIT"
 	} else {
@@ -84,6 +94,7 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 		// O contexto não é cancelado se o primeiro cliente desconectar, para não
 		// derrubar os demais requests que compartilham o resultado.
 		v, err, shared := tfhdsSF.Do(cacheKey, func() (interface{}, error) {
+			fetchedHere = true
 			fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tfhdsFetchTimeout)
 			defer cancel()
 			resp, err := i.fetchTorrentFilmesHDs(fetchCtx, q, page)
@@ -99,7 +110,7 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 		})
 		if err != nil {
 			logging.Error().Err(err).Str("q", q).Msg("Failed to fetch torrentfilmeshds")
-			http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+			i.writeTfhdsError(w, err)
 			return
 		}
 		raw = v.([]byte)
@@ -113,11 +124,16 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	var resp Response
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		logging.Error().Err(err).Str("q", q).Msg("Failed to decode torrentfilmeshds result")
-		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+		i.writeTfhdsError(w, err)
 		return
 	}
 
-	// Aplica post-processors no handler, onde o *http.Request existe
+	// Aplica post-processors no handler, onde o *http.Request existe. Um HIT
+	// (ou quem só esperou o singleflight) não reenvia ao Meilisearch o que
+	// quem fez o scrape já enviou.
+	if !fetchedHere {
+		r = withoutSearchIndexing(r)
+	}
 	torrents := resp.Results
 	for _, processor := range i.postProcessors {
 		torrents = processor(i, r, torrents)
@@ -127,13 +143,21 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 
 	body, err := json.Marshal(resp)
 	if err != nil {
-		http.Error(w, "Failed to encode results", http.StatusInternalServerError)
+		i.writeTfhdsError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", cacheStatus)
 	_, _ = w.Write(body)
+}
+
+// writeTfhdsError answers with the same JSON error body as the other indexers.
+func (i *Indexer) writeTfhdsError(w http.ResponseWriter, err error) {
+	i.metrics.IndexerErrors.WithLabelValues("torrentfilmeshds").Inc()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 // fetchTorrentFilmesHDs faz o trabalho pesado (busca + scrape) isolado do handler HTTP.
@@ -155,7 +179,8 @@ func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Re
 		Str("q", q).
 		Msg("Processing indexer request")
 
-	doc, err := getDocument(ctx, i, targetURL, torrentFilmesHDs.URL)
+	// listagem muda a cada lançamento: só o cache curto do requester
+	doc, err := getListingDocument(ctx, i, targetURL, torrentFilmesHDs.URL)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to get document: %w", err)
 	}
@@ -172,7 +197,7 @@ func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Re
 				Str("url", altURL).
 				Msg("Trying fallback search")
 
-			altDoc, err := getDocument(ctx, i, altURL, torrentFilmesHDs.URL)
+			altDoc, err := getListingDocument(ctx, i, altURL, torrentFilmesHDs.URL)
 			if err != nil {
 				continue
 			}

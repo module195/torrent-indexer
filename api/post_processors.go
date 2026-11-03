@@ -2,6 +2,7 @@ package handler
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"html"
 	"net/http"
@@ -163,10 +164,26 @@ func AppendAudioTags(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorre
 	return torrents
 }
 
+type skipSearchIndexingKey struct{}
+
+// withoutSearchIndexing marks r so SendToSearchIndexer leaves the torrents
+// alone: a replay of a cached result was already sent when it was scraped.
+func withoutSearchIndexing(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), skipSearchIndexingKey{}, true))
+}
+
+func searchIndexingSkipped(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	skip, _ := r.Context().Value(skipSearchIndexingKey{}).(bool)
+	return skip
+}
+
 // SendToSearchIndexer sends the indexed torrents to the search indexer
-func SendToSearchIndexer(i *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
+func SendToSearchIndexer(i *Indexer, r *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	// nothing to do when Meilisearch is not configured or there is nothing to index
-	if i.search == nil || i.search.BaseURL == "" || len(torrents) == 0 {
+	if i.search == nil || i.search.BaseURL == "" || len(torrents) == 0 || searchIndexingSkipped(r) {
 		return torrents
 	}
 	// Upsert without empty fields, as the betor dump does: replacing the whole

@@ -146,14 +146,14 @@ func HandlerIndex(w http.ResponseWriter, r *http.Request) {
 			Manual: []EndpointDetail{
 				{
 					Method:      "POST",
-					Description: "Add a manual torrent entry to the indexer for 12 hours",
+					Description: "Add a manual torrent entry to the indexer for 8 hours (header Authorization: Bearer <MANUAL_API_TOKEN> when that variable is set)",
 					Body: map[string]interface{}{
 						"magnetLink": "magnet link",
 					},
 				},
 				{
 					Method:      "GET",
-					Description: "Get all manual torrents",
+					Description: "Get the manual torrents (q, filters, sortBy and limit work as on the indexers)",
 				},
 			},
 			Search: []EndpointDetail{
