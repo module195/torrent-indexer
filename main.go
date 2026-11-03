@@ -96,6 +96,23 @@ func main() {
 
 	redis := cache.NewRedis()
 	searchIndex := meilisearch.NewSearchIndexer(os.Getenv("MEILISEARCH_ADDRESS"), os.Getenv("MEILISEARCH_KEY"), "torrents")
+	if searchIndex.BaseURL != "" {
+		// filter/sort settings for the IMDb search; Meilisearch may still be
+		// starting, so it retries for a while without holding the start
+		go func() {
+			for attempt := 1; attempt <= 10; attempt++ {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := searchIndex.EnsureSettings(ctx)
+				cancel()
+				if err == nil {
+					logging.Info().Msg("Meilisearch index settings applied")
+					return
+				}
+				logging.Warn().Err(err).Int("attempt", attempt).Msg("Failed to apply Meilisearch index settings")
+				time.Sleep(time.Duration(attempt) * 5 * time.Second)
+			}
+		}()
+	}
 	var magnetMetadataAPI *magnet.MetadataClient
 	if os.Getenv("MAGNET_METADATA_API_ENABLED") == "true" {
 		timeout := 10 * time.Second

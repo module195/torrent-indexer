@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/module195/torrent-indexer/schema"
@@ -177,25 +178,106 @@ func (t *SearchIndexer) SearchTorrent(ctx context.Context, query string, limit i
 	return t.search(ctx, query, limit, attributes, "last")
 }
 
-// SearchTorrentByIMDB searches the imdb field (an IMDb URL such as
-// https://www.imdb.com/title/tt3581920/) for an ID like tt3581920. The ID is
-// sent as a phrase so Meilisearch applies neither typo tolerance nor prefix
-// matching; callers should still check the ID exactly. Every hit ties on
-// relevance, so Meilisearch returns them in insertion order, oldest first:
-// callers wanting the newest releases of a long series must ask for up to
-// MaxSearchHits and sort them themselves.
+// Settings the index needs: imdb_id filterable and date_ts/seed_count
+// sortable, for SearchTorrentByIMDB. Only these two lists are sent, the
+// other settings stay as they are.
+var indexSettings = map[string]any{
+	"filterableAttributes": []string{"imdb_id"},
+	"sortableAttributes":   []string{"date_ts", "seed_count"},
+}
+
+// EnsureSettings applies indexSettings. Meilisearch treats the same settings
+// as a no-op, so it is safe at every start; a change makes it reindex in the
+// background.
+func (t *SearchIndexer) EnsureSettings(ctx context.Context) error {
+	url := fmt.Sprintf("%s/indexes/%s/settings", t.BaseURL, t.IndexName)
+	jsonData, err := json.Marshal(indexSettings)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if t.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", t.APIKey))
+	}
+	resp, err := t.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to update settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("update settings: status %d, body: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
+// SearchTorrentByIMDB returns the releases of an IMDb ID (tt3581920), newest
+// first. It filters on imdb_id sorted by date_ts, and merges in the old text
+// search on the imdb link: that one returns every hit tied, oldest first, so
+// past MaxSearchHits a long series lost exactly its newest episodes, but it
+// still finds documents indexed before imdb_id existed. Callers should still
+// check the ID exactly.
 func (t *SearchIndexer) SearchTorrentByIMDB(ctx context.Context, imdbID string, limit int) ([]schema.IndexedTorrent, error) {
-	return t.search(ctx, `"`+imdbID+`"`, min(limit, MaxSearchHits), []string{"imdb"}, "all")
+	limit = min(limit, MaxSearchHits)
+	var (
+		wg                 sync.WaitGroup
+		newest, legacy     []schema.IndexedTorrent
+		newestErr, legacyE error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		newest, newestErr = t.query(ctx, map[string]any{
+			"q":      "",
+			"limit":  limit,
+			"filter": fmt.Sprintf("imdb_id = %q", imdbID),
+			"sort":   []string{"date_ts:desc"},
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		legacy, legacyE = t.searchIMDBText(ctx, imdbID, limit)
+	}()
+	wg.Wait()
+	if newestErr != nil && legacyE != nil {
+		return nil, legacyE
+	}
+	// newest first; the text search fills in what has no imdb_id yet
+	seen := make(map[string]bool, len(newest))
+	out := make([]schema.IndexedTorrent, 0, len(newest)+len(legacy))
+	for _, list := range [][]schema.IndexedTorrent{newest, legacy} {
+		for _, it := range list {
+			if key := strings.ToLower(it.InfoHash); key == "" || !seen[key] {
+				seen[key] = true
+				out = append(out, it)
+			}
+		}
+	}
+	return out, nil
+}
+
+// searchIMDBText is the old IMDb search: the ID as a phrase in the imdb link,
+// so Meilisearch applies neither typo tolerance nor prefix matching.
+func (t *SearchIndexer) searchIMDBText(ctx context.Context, imdbID string, limit int) ([]schema.IndexedTorrent, error) {
+	return t.search(ctx, `"`+imdbID+`"`, limit, []string{"imdb"}, "all")
 }
 
 func (t *SearchIndexer) search(ctx context.Context, query string, limit int, attributes []string, matchingStrategy string) ([]schema.IndexedTorrent, error) {
-	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
-	requestBody := map[string]interface{}{
+	return t.query(ctx, map[string]any{
 		"q":                    query,
 		"limit":                limit,
 		"matchingStrategy":     matchingStrategy,
 		"attributesToSearchOn": attributes,
-	}
+	})
+}
+
+// query runs one search request with requestBody as is.
+func (t *SearchIndexer) query(ctx context.Context, requestBody map[string]any) ([]schema.IndexedTorrent, error) {
+	url := fmt.Sprintf("%s/indexes/%s/search", t.BaseURL, t.IndexName)
 
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {

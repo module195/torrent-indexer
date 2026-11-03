@@ -99,6 +99,7 @@ These additions are optional: existing routes and their JSON are unchanged.
   - Pairs an indexer can't answer are skipped instead of called (IMDb ids only go to `betor` and `bludv_ru`, text queries to all but `betor`).
   - Response: `results` (deduplicated by info hash: highest seeders/leechers and similarity, union of audio/trackers, the file list of any copy that has one, a real title preferred over an `[UNSAFE]` fallback, plus `found_in` with every indexer that had it), `count`, `partial` (true if any call timed out) and `calls`: one entry per pair with `indexer`, `q`, `state` (`ok|error|skipped|timeout|background`), `status`, `count`, `duration_ms`, `cache` (the call's `X-Cache`) and `reason` (`imdb_not_supported`, `text_not_supported`, `unknown_indexer`, `reserve`, `not_started` for a call still queued at the deadline (its `duration_ms` is 0), or the indexer's error).
   - `/search` is unchanged and still only queries Meilisearch.
+- **`/search` by IMDb id** (`q=tt1234567`): filters Meilisearch on `imdb_id` sorted by `date_ts` (newest first), merged with the older text match on the `imdb` link for documents indexed before `imdb_id` existed. At start the indexer applies the index settings this needs (`filterableAttributes: [imdb_id]`, `sortableAttributes: [date_ts, seed_count]`); Meilisearch then reindexes in the background. Documents get `imdb_id`/`date_ts` when they are next upserted (every betor dump sync, or a scrape).
 
 ## Integrating with Jackett
 

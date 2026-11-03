@@ -261,6 +261,14 @@ func compactTorrentDocument(t schema.IndexedTorrent) map[string]any {
 	}
 	if !t.Date.IsZero() {
 		doc["date"] = t.Date
+		// numeric, so Meilisearch can sort by it (the RFC 3339 string mixes
+		// offsets and would sort as text)
+		doc["date_ts"] = t.Date.Unix()
+	}
+	// the bare ID (tt1234567), filterable: /search by IMDb filters on it
+	// instead of matching the link as text
+	if id := reIMDbIDInLink.FindString(strings.ToLower(t.IMDB)); id != "" {
+		doc["imdb_id"] = id
 	}
 	return doc
 }
