@@ -505,3 +505,31 @@ func Test_parseQueryTarget(t *testing.T) {
 		}
 	}
 }
+
+// The file list of a later copy survives the dedup when the first copy has
+// none (bludv_ru without files, betor with them).
+func Test_DedupByInfoHashKeepsFiles(t *testing.T) {
+	const hash = "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c"
+	files := []schema.File{{Path: "S01E01.mkv", Size: "1 GB"}, {Path: "S01E02.mkv", Size: "1 GB"}}
+	in := []schema.IndexedTorrent{
+		{Title: "no files", InfoHash: hash},
+		{Title: "with files", InfoHash: hash, Files: files},
+	}
+	got := DedupByInfoHash(nil, nil, in)
+	if len(got) != 1 {
+		t.Fatalf("want 1 torrent, got %d", len(got))
+	}
+	if !slices.Equal(got[0].Files, files) {
+		t.Fatalf("files = %v, want %v", got[0].Files, files)
+	}
+
+	// a copy that already has files keeps its own
+	other := []schema.File{{Path: "other.mkv"}}
+	got = DedupByInfoHash(nil, nil, []schema.IndexedTorrent{
+		{InfoHash: hash, Files: other},
+		{InfoHash: hash, Files: files},
+	})
+	if !slices.Equal(got[0].Files, other) {
+		t.Fatalf("files = %v, want the first copy's %v", got[0].Files, other)
+	}
+}

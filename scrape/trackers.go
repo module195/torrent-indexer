@@ -19,6 +19,14 @@ import (
 const (
 	trackersListCacheKey        = "dynamic_trackers_list"
 	trackersListCacheExpiration = 24 * time.Hour
+	// each mirror gets this long; the list is fetched on the search path, so
+	// three slow mirrors used to hold a scrape for up to 30s
+	trackersListFetchTimeout = 3 * time.Second
+	// the list is a few KB; anything bigger is not a tracker list
+	trackersListMaxBytes = 1 << 20
+	// after every mirror failed, use the static list for this long before
+	// trying the mirrors again
+	trackersFailureTTL = 5 * time.Minute
 )
 
 var trackersListURLs = []string{
@@ -41,30 +49,11 @@ func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error)
 	}
 
 	// Fetch from GitHub and mirrors
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
 	var lastErr error
 	for _, url := range trackersListURLs {
-		resp, err := client.Get(url)
+		body, err := fetchTrackersList(ctx, url)
 		if err != nil {
 			logging.Warn().Err(err).Str("url", url).Msg("Failed to fetch from tracker URL, trying next")
-			lastErr = err
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-			logging.Warn().Err(err).Str("url", url).Msg("HTTP error from tracker URL, trying next")
-			lastErr = err
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			logging.Warn().Err(err).Str("url", url).Msg("Failed to read response, trying next")
 			lastErr = err
 			continue
 		}
@@ -105,6 +94,32 @@ func fetchDynamicTrackers(ctx context.Context, r *cache.Redis) ([]string, error)
 	return nil, lastErr
 }
 
+// fetchTrackersList downloads one mirror's list, bounded in time and size.
+func fetchTrackersList(ctx context.Context, url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, trackersListFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, trackersListMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > trackersListMaxBytes {
+		return nil, fmt.Errorf("tracker list larger than %d bytes", trackersListMaxBytes)
+	}
+	return body, nil
+}
+
 // in-memory copy of the dynamic list, so each infohash doesn't hit Redis and
 // re-decode the JSON list
 const trackersMemoryTTL = 10 * time.Minute
@@ -142,8 +157,16 @@ func getAdditionalTrackers(ctx context.Context, r *cache.Redis) []string {
 		return dynamicTrackers
 	}
 
-	// Fallback to static trackers
-	logging.Warn().Err(err).Msg("Falling back to static trackers")
+	// Fallback to static trackers, and keep using them for a while: without
+	// this every scrape retried the dead mirrors
+	logging.Warn().Err(err).Dur("retry_in", trackersFailureTTL).Msg("Falling back to static trackers")
+	// (a fetch cut short by the caller giving up says nothing about the mirrors)
+	if ctx.Err() == nil {
+		trackersMemMu.Lock()
+		trackersMem = staticAdditionalTrackers
+		trackersMemExpires = time.Now().Add(trackersFailureTTL)
+		trackersMemMu.Unlock()
+	}
 	return staticAdditionalTrackers
 }
 
