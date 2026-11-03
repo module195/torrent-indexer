@@ -12,10 +12,10 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/fereidani/httpdecompressor"
 	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/utils"
-	"github.com/fereidani/httpdecompressor"
 )
 
 const (
@@ -175,8 +175,15 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 		logging.Debug().Str("url", url).Msg("Request served from plain client")
 	}
 
-	// don't cache error pages (404/5xx) served by the plain client; they are
-	// still returned so callers behave exactly as before
+	// a 5xx, 403 or 429 page is the site failing or blocking us, not a page
+	// without results: report it, so the handler answers with an error and
+	// the source health in /sources?v=2 sees the failure
+	if servedByPlainClient && isUpstreamFailure(resp.StatusCode) {
+		return nil, &UpstreamStatusError{URL: url, StatusCode: resp.StatusCode}
+	}
+
+	// don't cache other error pages (404) served by the plain client; they
+	// are still returned, since some sites answer an empty search with 404
 	cacheable := !servedByPlainClient || (resp.StatusCode >= 200 && resp.StatusCode < 300)
 
 	// save response to cache if it's not a challange, body is not empty and is valid HTML
@@ -196,6 +203,21 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	}
 
 	return io.NopCloser(bytes.NewReader(bodyByte)), nil
+}
+
+// UpstreamStatusError is returned when the site answered with a status that
+// means it failed or blocked the request (5xx, 403, 429).
+type UpstreamStatusError struct {
+	URL        string
+	StatusCode int
+}
+
+func (e *UpstreamStatusError) Error() string {
+	return fmt.Sprintf("upstream returned status %d for url %s", e.StatusCode, e.URL)
+}
+
+func isUpstreamFailure(code int) bool {
+	return code >= 500 || code == http.StatusForbidden || code == http.StatusTooManyRequests
 }
 
 func (i *Requster) ExpireDocument(ctx context.Context, url string) error {

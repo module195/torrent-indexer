@@ -179,8 +179,8 @@ func parseBetorItem(ctx context.Context, i *Indexer, item *goquery.Selection) (s
 	seedsStr, _ := item.Attr("data-torrent-num-seeds")
 	peersStr, _ := item.Attr("data-torrent-num-peers")
 	imdbID, _ := item.Attr("data-item-imdb-id")
-	_, _ = item.Attr("data-item-tmdb-id")     // available if needed later
-	_, _ = item.Attr("data-item-type")        // "movie" or "tv"
+	_, _ = item.Attr("data-item-tmdb-id") // available if needed later
+	_, _ = item.Attr("data-item-type")    // "movie" or "tv"
 	providerURL, _ := item.Attr("data-provider-url")
 	insertedAt, _ := item.Attr("data-torrent-inserted-at")
 
@@ -422,6 +422,11 @@ func mergeTorrent(a, b schema.IndexedTorrent) schema.IndexedTorrent {
 	if out.InfoHash == "" && b.InfoHash != "" {
 		out.InfoHash = b.InfoHash
 	}
+	// the file list is what lets a client pick the episode in a season pack;
+	// keep it even when only the other copy has one
+	if len(out.Files) == 0 && len(b.Files) > 0 {
+		out.Files = b.Files
+	}
 
 	// Union of audio tags
 	out.Audio = unionAudio(out.Audio, b.Audio)
@@ -497,7 +502,7 @@ func cleanBetorTitle(raw string) string {
 		"SEM TORRENT", "REDESTORRENTS",
 	}
 	for _, prefix := range sitePrefixes {
-		s = regexp.MustCompile(`(?i)^` + regexp.QuoteMeta(prefix) + `\s*[-.]?\s*`).ReplaceAllString(s, "")
+		s = regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(prefix)+`\s*[-.]?\s*`).ReplaceAllString(s, "")
 	}
 
 	// Generic pattern: remove any "*TORRENT COM" or "*TORRENTS COM" at start

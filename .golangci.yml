@@ -6,6 +6,3 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
-    paths:
-      - scrape\.go$
-      - infohash\.go$

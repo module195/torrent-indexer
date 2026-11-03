@@ -65,10 +65,6 @@ type Goscrape struct {
 	timeout      time.Duration
 }
 
-func init() {
-	rand.Seed(time.Now().UTC().UnixNano())
-}
-
 // New creates a new instance of goscrape for the given torrent tracker
 func New(rawurl string) (*Goscrape, error) {
 	u, err := url.Parse(rawurl)
@@ -133,7 +129,9 @@ func (g *Goscrape) connect() (net.Conn, uint64, error) {
 			retries++
 
 			// Set a write deadline
-			g.conn.SetWriteDeadline(time.Now().Add(g.timeout))
+			if err = g.conn.SetWriteDeadline(time.Now().Add(g.timeout)); err != nil {
+				return nil, 0, err
+			}
 
 			n, err = g.conn.Write(buf)
 			if err != nil {
@@ -144,7 +142,9 @@ func (g *Goscrape) connect() (net.Conn, uint64, error) {
 			}
 
 			// Set a read deadline
-			g.conn.SetReadDeadline(time.Now().Add(g.timeout))
+			if err = g.conn.SetReadDeadline(time.Now().Add(g.timeout)); err != nil {
+				return nil, 0, err
+			}
 
 			// Reuse our buffer to read the response
 			n, err = g.conn.Read(buf)
@@ -166,7 +166,7 @@ func (g *Goscrape) connect() (net.Conn, uint64, error) {
 		if action := binary.BigEndian.Uint32(buf[0:]); action != actionConnect {
 			return nil, 0, ErrInvalidAction
 		}
-		if tid := binary.BigEndian.Uint32(buf[4:]); tid != tid {
+		if got := binary.BigEndian.Uint32(buf[4:]); got != tid {
 			return nil, 0, ErrInvalidTransactionID
 		}
 
@@ -268,7 +268,9 @@ func (g *Goscrape) Scrape(infohash ...[]byte) ([]*ScrapeResult, error) {
 		retries++
 
 		// Set a write deadline
-		conn.SetWriteDeadline(time.Now().Add(g.timeout))
+		if err = conn.SetWriteDeadline(time.Now().Add(g.timeout)); err != nil {
+			return nil, err
+		}
 
 		// Send the packet to the tracker
 		n, err = conn.Write(buf)
@@ -281,7 +283,9 @@ func (g *Goscrape) Scrape(infohash ...[]byte) ([]*ScrapeResult, error) {
 		}
 
 		// Set a read deadline
-		conn.SetReadDeadline(time.Now().Add(g.timeout))
+		if err = conn.SetReadDeadline(time.Now().Add(g.timeout)); err != nil {
+			return nil, err
+		}
 
 		n, err = conn.Read(response)
 		if err, ok := err.(net.Error); ok && err.Timeout() {

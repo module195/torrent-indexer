@@ -17,7 +17,7 @@ var _ fmt.Formatter = (*T)(nil)
 func (t T) Format(f fmt.State, c rune) {
 	// TODO: I can't figure out a nice way to just override the 'x' rune, since it's meaningless
 	// with the "default" 'v', or .String() already returning the hex.
-	f.Write([]byte(t.HexString()))
+	_, _ = f.Write([]byte(t.HexString()))
 }
 
 func (t T) Bytes() []byte {

@@ -98,10 +98,14 @@ func limitTrackers(list []string, n int) []string {
 func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metrics, infoHash string, trackers []string) (int, int, error) {
 	leech, seed, err := getPeersFromCache(ctx, r, infoHash)
 	if err != nil {
-		m.CacheMisses.WithLabelValues("peers").Inc()
+		if m != nil {
+			m.CacheMisses.WithLabelValues("peers").Inc()
+		}
 		logging.Debug().Str("info_hash", infoHash).Msg("Unable to get peers from cache")
 	} else {
-		m.CacheHits.WithLabelValues("peers").Inc()
+		if m != nil {
+			m.CacheHits.WithLabelValues("peers").Inc()
+		}
 		logging.Debug().Str("info_hash", infoHash).Int("leech", leech).Int("seed", seed).Msg("Retrieved peers from cache")
 		return leech, seed, nil
 	}
