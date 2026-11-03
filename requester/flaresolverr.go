@@ -34,6 +34,8 @@ type FlareSolverr struct {
 	// sessions.* are never sent and pool entries are just concurrency slots.
 	sessionless atomic.Bool
 	detected    bool // guarded by initMu
+	// clearances keeps each host's cf_clearance for the plain client
+	clearances *clearanceStore
 }
 
 // dumbSession is a pool slot that is not a real FlareSolverr session.
@@ -100,6 +102,7 @@ func NewFlareSolverr(url string, timeoutMilli int, poolSize int) *FlareSolverr {
 		maxTimeout:  timeoutMilli,
 		httpClient:  httpClient,
 		sessionPool: sessionPool,
+		clearances:  newClearanceStore(),
 	}
 
 	f.tryInit()
@@ -346,25 +349,29 @@ func (f *FlareSolverr) RetrieveSession(ctx context.Context) (string, error) {
 }
 
 type Response struct {
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Solution struct {
-		Url     string `json:"url"`
-		Status  int    `json:"status"`
-		Cookies []struct {
-			Domain   string `json:"domain"`
-			Expiry   int    `json:"expiry"`
-			HttpOnly bool   `json:"httpOnly"`
-			Name     string `json:"name"`
-			Path     string `json:"path"`
-			SameSite string `json:"sameSite"`
-			Secure   bool   `json:"secure"`
-			Value    string `json:"value"`
-		} `json:"cookies"`
-		UserAgent string            `json:"userAgent"`
-		Headers   map[string]string `json:"headers"`
-		Response  string            `json:"response"`
-	} `json:"solution"`
+	Status   string   `json:"status"`
+	Message  string   `json:"message"`
+	Solution solution `json:"solution"`
+}
+
+type solution struct {
+	Url       string            `json:"url"`
+	Status    int               `json:"status"`
+	Cookies   []solverCookie    `json:"cookies"`
+	UserAgent string            `json:"userAgent"`
+	Headers   map[string]string `json:"headers"`
+	Response  string            `json:"response"`
+}
+
+type solverCookie struct {
+	Domain   string `json:"domain"`
+	Expiry   int    `json:"expiry"`
+	HttpOnly bool   `json:"httpOnly"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	SameSite string `json:"sameSite"`
+	Secure   bool   `json:"secure"`
+	Value    string `json:"value"`
 }
 
 func (f *FlareSolverr) Get(ctx context.Context, _url string, attempts int) (io.ReadCloser, error) {
@@ -509,10 +516,14 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 			return nil, false, fmt.Errorf("page larger than %d bytes: %s", flaresolverrMaxBody, _url)
 		}
 
+		f.clearances.remember(_url, response.Solution)
 		// Return the body of the second request
 		return io.NopCloser(bytes.NewReader(respByte.Bytes())), false, nil
 	}
 
+	if response.Solution.Response != "" {
+		f.clearances.remember(_url, response.Solution)
+	}
 	// Return the original response body
 	return io.NopCloser(bytes.NewReader([]byte(response.Solution.Response))), false, nil
 }
