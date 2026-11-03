@@ -125,6 +125,12 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 
 	// Add browser-like headers to spoof a real browser
 	spoofBrowserHeaders(req, ref)
+	// a clearance the solver got for this host lets the plain client past
+	// the challenge, instead of a full solve for each page of the site
+	cl, withClearance := i.fs.clearanceFor(url)
+	if withClearance {
+		cl.apply(req)
+	}
 
 	resp, err := i.httpClient.Do(req)
 	if err != nil {
@@ -160,6 +166,10 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	bodyByte = buf.Bytes()
 	servedByPlainClient := resp != nil
 	if hasChallange(bodyByte) {
+		if withClearance && resp != nil {
+			logging.Debug().Str("url", url).Msg("Solver clearance rejected by the site")
+			i.fs.clearanceRejected(url)
+		}
 		servedByPlainClient = false
 		// try request with flare solverr
 		body, err = i.fs.Get(ctx, url, 3)
@@ -171,6 +181,8 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 			return nil, fmt.Errorf("failed to read response body: %w", err)
 		}
 		logging.Debug().Str("url", url).Msg("Request served from flaresolverr")
+	} else if withClearance && resp != nil {
+		logging.Debug().Str("url", url).Msg("Request served from plain client with solver clearance")
 	} else {
 		logging.Debug().Str("url", url).Msg("Request served from plain client")
 	}

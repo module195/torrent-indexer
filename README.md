@@ -44,6 +44,7 @@ You can configure the server using the following environment variables:
 - `FLARESOLVERR_ADDRESS`: (optional) The address of the FlareSolverr instance. Default: `N/A`
 - `FLARESOLVERR_TIMEOUT_SECONDS`: (optional) Timeout for flaresolverr requests. Default: `30`
 - `FLARESOLVERR_POOL_SIZE`: (optional) Number of FlareSolverr sessions in the pool. Default: `5`
+  After a solve that returns `cf_clearance`, the plain client reuses that cookie and the solver's user agent for the other pages of the same host, for up to 25 minutes (or the cookie's expiry), so a challenged site costs about one solve per host instead of one per page. If the site still answers with a challenge, the clearance is dropped and reuse stops for that host for 30 minutes (for example when the solver leaves through another IP, since `cf_clearance` is bound to it).
 - `FLARESOLVERR_HEALTHCHECK_SECONDS`: (optional) Interval to verify pooled FlareSolverr sessions and recreate the ones lost after a FlareSolverr restart. Default: `N/A` (disabled)
 - `FLARESOLVERR_SESSIONS`: (optional) `true`/`false` forces whether the solver supports `sessions.*`. By default it is detected from `GET /`: FlareSolverr uses a pool of sessions; Byparr (which only speaks `request.get`) gets `FLARESOLVERR_POOL_SIZE` concurrency slots and is never sent `sessions.*`. Default: `N/A` (auto)
 - `REQUEST_COALESCE`: (optional) `true` makes concurrent requests for the same page URL share a single fetch. Default: `false`
