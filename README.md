@@ -55,6 +55,7 @@ You can configure the server using the following environment variables:
 - `TRACKER_SCRAPE_CONCURRENCY`: (optional) Global limit of concurrent UDP tracker scrapes. Default: `N/A` (unlimited)
 - `REDIS_NAMESPACED_KEYS`: (optional) `true` prefixes Redis keys by type (`doc:`, `doc:short:`, `peers:`, `meta:`). Old keys expire on their own. Default: `false`
 - `REQUEST_TIMEOUT_MILLISECONDS`: (optional) Timeout for external scraping requests. Default: `5000`
+- `MANUAL_API_TOKEN`: (optional) When set, `POST /indexers/manual` needs `Authorization: Bearer <token>`. Default: `N/A` (open, as before)
 - `MEILISEARCH_ADDRESS`: (optional) The address of the MeiliSearch instance. Default: `N/A`
 - `MEILISEARCH_KEY`: (optional) The API key of the MeiliSearch instance. Default: `N/A`
 - `BETOR_DUMP`: (optional) `true` or `false` to turn the betor dump sync on or off without touching `BETOR_DUMP_URL`. `false` keeps it off even when `BETOR_DUMP_URL` is set; `true` turns it on and uses `https://catalogo-data.betor.top/items.json` when `BETOR_DUMP_URL` is empty. Needs `MEILISEARCH_ADDRESS`. Default: `N/A` (on when `BETOR_DUMP_URL` is set)
@@ -81,7 +82,7 @@ You can configure the server using the following environment variables:
 These additions are optional: existing routes and their JSON are unchanged.
 
 - **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
-- **Cache bypass**: add `nocache=1` to an `/indexers/<name>` (or `/indexers/multi`) request, or send `Cache-Control: no-cache`, to skip the cached response and run the indexer again; the fresh result replaces the cached one. `nocache` is not part of the cache key. It skips only the response cache, not the page cache of `SHORT_LIVED_CACHE_EXPIRATION`, and `torrentfilmeshds` keeps its own cache.
+- **Cache bypass**: add `nocache=1` to an `/indexers/<name>` (or `/indexers/multi`) request, or send `Cache-Control: no-cache`, to skip the cached response and run the indexer again; the fresh result replaces the cached one. `nocache` is not part of the cache key. It skips only the response cache (for `torrentfilmeshds`, its own result cache), not the page cache of `SHORT_LIVED_CACHE_EXPIRATION`.
 - **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
   - `api_version`: `2`
   - `indexers`: one entry per active indexer with `name`, `supports_text`, `supports_imdb`, `tier` (`primary`, `secondary` or `reserve`, see `/indexers/multi`), `reserve_for` (reserves only: the primary it mirrors), `healthy` (false after 3 consecutive failed runs: HTTP 5xx/403/429, which includes the site itself answering 5xx/403/429; true again 5 minutes after the last failure so clients retry it, doubling on every failed retry up to 1 hour; always true during the first 2 minutes after start), `retry_after_s` (only while unhealthy: seconds until it is offered again), `consecutive_failures`, `last_failure_at` (RFC 3339, absent until a failure), `p50_ms` (median of the last 50 successful runs; absent until one) and `samples`. Stats live in memory and reset on restart; cached replays (`X-Cache: HIT`) are not counted.

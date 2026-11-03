@@ -18,6 +18,9 @@ func resetTrackersMem(t *testing.T) {
 		trackersMem = nil
 		trackersMemExpires = time.Time{}
 		trackersMemMu.Unlock()
+		// a local Redis may hold a real list from an earlier run
+		key := cache.Key(cache.KindMeta, trackersListCacheKey, trackersListCacheKey)
+		_ = cache.NewRedis().Del(context.Background(), key)
 	}
 	reset()
 	t.Cleanup(reset)
