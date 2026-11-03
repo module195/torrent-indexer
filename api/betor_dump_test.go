@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/module195/torrent-indexer/schema"
 	meilisearch "github.com/module195/torrent-indexer/search"
 )
 
@@ -118,5 +120,22 @@ func TestBetorDumpRunUpsertsWithPut(t *testing.T) {
 	}
 	if docs[0]["id"] != "8ae99c15f568cbb58714f94008f397b78a218e5a" || docs[0]["seed_count"] != float64(3) {
 		t.Errorf("unexpected document: %v", docs[0])
+	}
+}
+
+// The document carries the bare IMDb ID and a numeric date, which the IMDb
+// search filters and sorts on.
+func Test_compactTorrentDocumentIMDbIDAndDate(t *testing.T) {
+	date := time.Date(2026, 10, 30, 21, 0, 0, 0, time.FixedZone("BRT", -3*3600))
+	doc := compactTorrentDocument(schema.IndexedTorrent{
+		InfoHash: "aa",
+		IMDB:     "https://www.imdb.com/pt/title/TT0096697/",
+		Date:     date,
+	})
+	if doc["imdb_id"] != "tt0096697" || doc["date_ts"] != date.Unix() {
+		t.Errorf("imdb_id=%v date_ts=%v", doc["imdb_id"], doc["date_ts"])
+	}
+	if doc := compactTorrentDocument(schema.IndexedTorrent{InfoHash: "bb"}); doc["imdb_id"] != nil || doc["date_ts"] != nil {
+		t.Errorf("empty fields must stay out: %v", doc)
 	}
 }

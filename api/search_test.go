@@ -72,6 +72,19 @@ type meiliRequest struct {
 	Q          string   `json:"q"`
 	Attributes []string `json:"attributesToSearchOn"`
 	Limit      int      `json:"limit"`
+	Filter     string   `json:"filter"`
+	Sort       []string `json:"sort"`
+}
+
+// textSearches drops the imdb_id filter searches.
+func textSearches(reqs []meiliRequest) []meiliRequest {
+	var out []meiliRequest
+	for _, r := range reqs {
+		if r.Filter == "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // fakeMeili serves hits for every search and records the requests it got.
@@ -129,9 +142,10 @@ func Test_searchHandlerIMDbID(t *testing.T) {
 
 	p := runSearch(t, h, " TT11198330 ")
 
-	reqs := requests()
-	if len(reqs) != 1 {
-		t.Fatalf("%d searches, want 1", len(reqs))
+	all := requests()
+	reqs := textSearches(all)
+	if len(all) != 2 || len(reqs) != 1 {
+		t.Fatalf("searches %+v, want one filter and one text search", all)
 	}
 	if reqs[0].Q != `"tt11198330"` || !slices.Equal(reqs[0].Attributes, []string{"imdb"}) {
 		t.Errorf("search sent %+v, want the quoted ID on imdb only", reqs[0])
@@ -253,8 +267,14 @@ func Test_searchHandlerIMDbFetchesAllThenLimits(t *testing.T) {
 
 	p := runSearchParams(t, h, url.Values{"q": {"tt0903747"}, "limit": {"1"}})
 
-	if reqs := requests(); len(reqs) != 1 || reqs[0].Limit != meilisearch.MaxSearchHits {
-		t.Fatalf("searches %+v, want one asking for %d hits", reqs, meilisearch.MaxSearchHits)
+	reqs := requests()
+	if len(reqs) != 2 {
+		t.Fatalf("searches %+v, want a filter and a text search", reqs)
+	}
+	for _, r := range reqs {
+		if r.Limit != meilisearch.MaxSearchHits {
+			t.Fatalf("searches %+v, want each asking for %d hits", reqs, meilisearch.MaxSearchHits)
+		}
 	}
 	// Meilisearch returns IMDb hits oldest first: the limit applies after sorting
 	if titles := titlesOf(p.Results); !slices.Equal(titles, []string{"Breaking Bad S05E16"}) {
