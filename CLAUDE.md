@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # torrent-indexer (fork module195)
 
 Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a fonte de busca do **guindex** (addon Stremio, repo `module195/guindex`), que entrega streams via TorBox/Real-Debrid e é consumido pelo AIOStreams.
@@ -5,8 +9,8 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 ## Comandos
 
 - Build: `go build ./...` · Rodar: `go run main.go` (porta 7006, métricas em 8081)
-- Testes: `go test -race -shuffle=on ./...` (é o que o CI roda)
-- Lint: `make lint` (golangci-lint v2, config em `.golangci.yml`)
+- Testes: `go test -race -shuffle=on ./...` (é o que o CI roda). Um teste só: `go test -race -run 'Test_activeIndexersMatchIndexerNames' ./api/`
+- Lint: `make lint` (golangci-lint `@latest`, config em `.golangci.yml`; o CI fixa a v2.13.2). O CI também falha se `go mod tidy` mudar algo: rode-o e commite o resultado (a mensagem do CI fala em `make format`, que não existe no Makefile)
 - Stack completa: `MEILI_MASTER_KEY=... docker compose up -d --build` → http://localhost:8080 (indexer + Redis + FlareSolverr + Meilisearch v1.55)
 
 ## Mapa do código
@@ -14,6 +18,7 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 - `main.go`: lê env, monta `indexerRoutes` (nome → handler com `respCache.Wrap` + `stats.Track`) e as rotas.
 - `api/`: um arquivo por site (`bludv_ru.go`, `rede_torrent.go`, `starck_filmes.go`, `betor.go`, `torrentfilmeshds.go`, `baixarapido.go`…), mais `multi.go` (`/indexers/multi`), `capabilities.go` (`ActiveIndexers`, tiers), `response_cache.go`, `search.go`, `post_processors.go`, `betor_dump.go`.
 - `api/testdata/<indexer>/`: HTML real usado nos testes de parser.
+- Fluxo de um `GET /indexers/<nome>`: `skipIMDBQueryMiddleware` (devolve lista vazia se o indexer não aceita IMDb) → `respCache.Wrap` → `stats.Track` → handler do site em `api/<site>.go` (busca a página via `requester`, parseia com goquery, pega seeders em `scrape/`) → cadeia de `PostProcessorFunc` de `api/post_processors.go` (limpeza de título, IMDb, áudio, envio ao Meilisearch, similaridade, sort/limit). `/indexers/multi` chama esses mesmos handlers em processo, por isso cache e stats valem nos dois caminhos.
 - `requester/`: HTTP + FlareSolverr/Byparr (pool de sessões). `scrape/`: seeders via UDP trackers. `search/meilisearch.go`. `schema/`: `IndexedTorrent`, regex de áudio. `monitoring/prometheus.go`: métricas.
 
 ## Contrato com o guindex (não quebrar)
