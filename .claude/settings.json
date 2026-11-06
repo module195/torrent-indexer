@@ -1,5 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ECC_DISABLED_HOOKS": "stop:desktop-notify,pre:observe:continuous-learning,stop:evaluate-session,stop:session-end,pre:compact,session:end:marker",
+    "GATEGUARD_BASH_ROUTINE_DISABLED": "1"
+  },
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
@@ -30,6 +34,17 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gofmt.sh",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/go-vet-stop.sh",
+            "timeout": 180
           }
         ]
       }

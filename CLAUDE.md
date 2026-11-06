@@ -39,7 +39,8 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 
 - Plugins (`.claude/settings.json`): gopls-lsp, security-guidance, pr-review-toolkit, commit-commands, claude-md-management, playwright, context7. Precisa de `gopls` no PATH: `go install golang.org/x/tools/gopls@latest`.
 - MCPs (`.mcp.json`): `gopls` (MCP do gopls), `meilisearch` (MCP nativo, só leitura) e `redis`. Variáveis: `MEILI_MCP_URL`, `MEILI_MCP_KEY`, `REDIS_MCP_URL`. Para criar a chave do Meilisearch: `scripts/meili-mcp-setup.sh`. O Redis MCP precisa de `uv` (`uvx`); na primeira vez o download leva ~30 s e pode estourar o timeout de conexão, então rode antes `uvx --from redis-mcp-server@latest redis-mcp-server --help`. Ele expõe ferramentas de escrita (`set`, `delete`...): aponte para um usuário Redis só leitura (ACL) fora do ambiente local.
-- Hooks: `gofmt -w` em cada `.go` editado; `proteger-arquivos.sh` bloqueia edição manual de `go.sum`, `package-lock.json`, `.env*` (menos `.env.example`) e de HTML que já existe em `api/testdata/` (amostra nova pode).
+- Hooks: `gofmt -w` em cada `.go` editado; `proteger-arquivos.sh` bloqueia edição manual de `go.sum`, `package-lock.json`, `.env*` (menos `.env.example`) e de HTML que já existe em `api/testdata/` (amostra nova pode). `go-vet-stop.sh` (Stop) roda `go vet ./...` no fim da resposta quando há `.go` alterado e devolve o erro ao Claude.
+- ECC (plugin da conta): o `env` do `.claude/settings.json` desliga por `ECC_DISABLED_HOOKS` os hooks que só gravam estado local ou notificam o desktop (inúteis na nuvem) e alivia o GateGuard para Bash rotineiro (`GATEGUARD_BASH_ROUTINE_DISABLED=1`; comandos destrutivos continuam checados).
 - Skills: `novo-indexer-scraper`, `testar-busca-stack`, `mudar-contrato` (só por `/mudar-contrato`).
 - Subagente: `revisor-contrato` confere se o diff quebra o que o guindex consome; rode antes de PR que mexa em JSON ou rota.
 
