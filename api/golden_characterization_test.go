@@ -93,6 +93,7 @@ var (
 
 // Páginas de título: dados da página + um release por magnet, na ordem do parser.
 func Test_goldenTitlePages(t *testing.T) {
+	offlineIMDBLookup(t)
 	type out struct {
 		Page     any `json:"page"`
 		Releases any `json:"releases"`
@@ -131,6 +132,17 @@ func Test_goldenTitlePages(t *testing.T) {
 	}
 }
 
+// offlineIMDBLookup troca a busca de IMDb por título (OMDb/TVmaze, que o
+// parser do baixarapido chama quando a página não traz o id) por uma que não
+// acha nada. Sem isso o golden dependia da rede: offline o IMDb vinha vazio, no
+// CI vinha preenchido.
+func offlineIMDBLookup(t testing.TB) {
+	t.Helper()
+	orig := baixarApidoIMDBLookup
+	baixarApidoIMDBLookup = func(string, string) string { return "" }
+	t.Cleanup(func() { baixarApidoIMDBLookup = orig })
+}
+
 func baixarApidoFixtureLink(f string) string {
 	return "https://baixarapido.com/baixar/" + strings.TrimSuffix(f, ".html") + "/"
 }
@@ -162,6 +174,7 @@ func tfhdsFixtureReleases(t testing.TB, file string) []tfhdsGolden {
 // seeders: o scrape UDP não roda em teste), a partir de todas as páginas
 // gravadas. A ordem é a do arquivo, não a de chegada das goroutines.
 func fixtureTorrents(t testing.TB) []schema.IndexedTorrent {
+	offlineIMDBLookup(t)
 	var all []schema.IndexedTorrent
 	for _, f := range bludvRuFixtures {
 		link := "https://bludv.ru/" + strings.TrimSuffix(f, ".html") + "/"
