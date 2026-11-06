@@ -13,6 +13,7 @@ import (
 	"github.com/module195/torrent-indexer/magnet"
 	"github.com/module195/torrent-indexer/schema"
 	meilisearch "github.com/module195/torrent-indexer/search"
+	"github.com/module195/torrent-indexer/utils"
 )
 
 const (
@@ -74,6 +75,9 @@ func (s *BetorDumpSync) Start(ctx context.Context) {
 // runLocked runs a sync unless another replica holds the lock. Without Redis
 // (or with Redis down) it runs anyway: a duplicate upsert is harmless.
 func (s *BetorDumpSync) runLocked(ctx context.Context) {
+	// runs in the background sync goroutine: a panic on dump data must cost
+	// this sync, not the process
+	defer utils.RecoverAsError(nil, "betor dump sync")
 	if s.Redis != nil {
 		ttl := s.Interval / 2
 		if ttl < 10*time.Minute {

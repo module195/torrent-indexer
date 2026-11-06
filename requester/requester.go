@@ -28,6 +28,11 @@ var challangeRegex = regexp.MustCompile(`(?i)(just a moment|cf-chl-bypass|under 
 // any single caller's context.
 const coalesceTimeout = 2 * time.Minute
 
+// maxDocumentBody bounds a fetched page, after decompression. A scraped
+// site, or a host one of its links points to, controls both the declared
+// Content-Length and the body: neither may size an allocation unchecked.
+const maxDocumentBody = 16 << 20
+
 type Requster struct {
 	coalesce                  bool
 	sf                        singleflight.Group
@@ -86,7 +91,10 @@ func (i *Requster) GetDocument(ctx context.Context, url string, referer ...strin
 		return i.fetchDocument(ctx, url, ref, key)
 	}
 
-	ch := i.sf.DoChan(key, func() (interface{}, error) {
+	ch := i.sf.DoChan(key, func() (_ interface{}, err error) {
+		// the shared fetch runs outside the handler goroutine, where a
+		// panic would end the whole process instead of one request
+		defer utils.RecoverAsError(&err, "coalesced fetch")
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), coalesceTimeout)
 		defer cancel()
 		rc, err := i.fetchDocument(fetchCtx, url, ref, key)
@@ -150,18 +158,26 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 		defer body.Close()
 	}
 
-	// Pre-allocate buffer based on Content-Length if available
+	// Pre-allocate buffer based on Content-Length if available. The value
+	// comes from the remote server, so it is checked against the cap first.
 	var buf bytes.Buffer
+	if resp != nil && resp.ContentLength > maxDocumentBody {
+		return nil, fmt.Errorf("response too large for url %s: %d bytes", url, resp.ContentLength)
+	}
 	if resp != nil && resp.ContentLength > 0 {
 		buf.Grow(int(resp.ContentLength))
 	} else {
 		buf.Grow(32 * 1024) // Default 32KB pre-allocation
 	}
 
-	// Use io.Copy instead of io.ReadAll for better performance
-	_, err = io.Copy(&buf, body)
+	// Use io.Copy instead of io.ReadAll for better performance; the limit
+	// also covers gzip/br bodies that expand well past their wire size
+	n, err := io.Copy(&buf, io.LimitReader(body, maxDocumentBody+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body for url %s: %w", url, err)
+	}
+	if n > maxDocumentBody {
+		return nil, fmt.Errorf("response too large for url %s: more than %d bytes", url, maxDocumentBody)
 	}
 	bodyByte = buf.Bytes()
 	servedByPlainClient := resp != nil

@@ -198,6 +198,13 @@ func getTorrents(ctx context.Context, i *Indexer, link, referer string) ([]schem
 	for it, magnetLink := range magnetLinks {
 		it := it
 		go func(it int, magnetLink string) {
+			defer func() {
+				// a panic here would end the process: drop this torrent instead
+				if r := recover(); r != nil {
+					_ = utils.PanicError(r, "comando_torrents magnet")
+					chanIndexedTorrent <- schema.IndexedTorrent{}
+				}
+			}()
 			magnet, err := magnet.ParseMagnetUri(magnetLink)
 			if err != nil {
 				logging.Error().Err(err).Str("magnet_link", magnetLink).Msg("Failed to parse magnet URI")

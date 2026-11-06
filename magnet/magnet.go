@@ -89,7 +89,10 @@ func parseInfohash(xt string) (ih T, err error) {
 		return
 	}
 	if n != 20 {
-		panic(n)
+		// base32 with '=' padding decodes fewer bytes from 32 characters:
+		// malformed input from a scraped page, not an internal invariant
+		err = fmt.Errorf("xt decodes to %d bytes, want 20", n)
+		return
 	}
 	return
 }

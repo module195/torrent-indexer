@@ -35,8 +35,17 @@ func ParallelFlatMap[T any, R any](iterable []T, mapper func(item T) ([]R, error
 	mappedItems := []R{}
 	for _, link := range iterable {
 		go func(link T) {
-			items, err := mapper(link)
-			resChan <- result{items: items, err: err}
+			// a panic in a child goroutine is not caught by net/http and
+			// would end the process: report it as this item's error instead
+			var items []R
+			var err error
+			defer func() {
+				if r := recover(); r != nil {
+					err = PanicError(r, "ParallelFlatMap item")
+				}
+				resChan <- result{items: items, err: err}
+			}()
+			items, err = mapper(link)
 		}(link)
 	}
 
