@@ -26,7 +26,7 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 - `GET /indexers/<nome>`, `GET /indexers/multi?q=..&indexers=..&deadline_ms=..`, `GET /sources?v=2`, `GET /search` (só Meilisearch).
 - Header `X-Cache: HIT|MISS|SHARED|BYPASS`; `nocache=1` pula o cache de resposta.
 - Tiers em `api/capabilities.go`: primary (bludv_ru, rede_torrent, starck-filmes, betor), secondary (torrentfilmeshds), reserve (torrent-dos-filmes, comando_torrents, baixarapido).
-- Mudou JSON ou rota? Atualize o README ("API for aggregating clients") e avise que o guindex precisa acompanhar.
+- Mudou JSON ou rota? Use `/mudar-contrato`: atualiza o README ("API for aggregating clients"), roda o `revisor-contrato` e acompanha o guindex.
 
 ## Regras
 
@@ -39,8 +39,9 @@ Indexador em Go 1.25 que raspa sites brasileiros de torrent e expõe JSON. É a 
 
 - Plugins (`.claude/settings.json`): gopls-lsp, security-guidance, pr-review-toolkit, commit-commands, claude-md-management, playwright, context7. Precisa de `gopls` no PATH: `go install golang.org/x/tools/gopls@latest`.
 - MCPs (`.mcp.json`): `gopls` (MCP do gopls), `meilisearch` (MCP nativo, só leitura) e `redis`. Variáveis: `MEILI_MCP_URL`, `MEILI_MCP_KEY`, `REDIS_MCP_URL`. Para criar a chave do Meilisearch: `scripts/meili-mcp-setup.sh`. O Redis MCP precisa de `uv` (`uvx`); na primeira vez o download leva ~30 s e pode estourar o timeout de conexão, então rode antes `uvx --from redis-mcp-server@latest redis-mcp-server --help`. Ele expõe ferramentas de escrita (`set`, `delete`...): aponte para um usuário Redis só leitura (ACL) fora do ambiente local.
-- Hook: `gofmt -w` em cada `.go` editado.
-- Skills: `novo-indexer-scraper`, `testar-busca-stack`.
+- Hooks: `gofmt -w` em cada `.go` editado; `proteger-arquivos.sh` bloqueia edição manual de `go.sum`, `package-lock.json`, `.env*` (menos `.env.example`) e de HTML que já existe em `api/testdata/` (amostra nova pode).
+- Skills: `novo-indexer-scraper`, `testar-busca-stack`, `mudar-contrato` (só por `/mudar-contrato`).
+- Subagente: `revisor-contrato` confere se o diff quebra o que o guindex consome; rode antes de PR que mexa em JSON ou rota.
 
 ## Contexto extra
 
