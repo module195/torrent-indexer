@@ -40,7 +40,7 @@ func (i *Indexer) HandlerStarckFilmesIndexer(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	// supported query params: q, page, filter_results
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 	if page == "" {
 		page = "1"
 	}

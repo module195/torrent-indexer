@@ -207,7 +207,7 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 	if page == "" {
 		page = "1"
 	}
@@ -267,7 +267,7 @@ func (i *Indexer) HandlerBaixarApidoIndexer(w http.ResponseWriter, r *http.Reque
 	// Sem page pedida, lê também as páginas seguintes da busca (com aspas,
 	// "Homem Aranha" tem 3, e "Longe de Casa" está na 2). Cada uma é um GET,
 	// e o pré-filtro decide o que abrir.
-	if bq.title != "" && r.URL.Query().Get("page") == "" && len(entries) > 0 {
+	if bq.title != "" && pageParam(r) == "" && len(entries) > 0 {
 		entries = append(entries, fetchMoreBaixarApidoEntries(ctx, i, bq.title, baixarApidoPageTotal(doc))...)
 		entries = dedupBaixarApidoEntries(entries)
 	}

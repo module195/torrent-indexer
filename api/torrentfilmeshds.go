@@ -56,7 +56,7 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	// this route has no respCache.Wrap, so nocache is honored here
 	fresh := wantsFresh(r)
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 	if page == "" {
 		page = "1"
 	}

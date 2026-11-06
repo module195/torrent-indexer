@@ -42,7 +42,7 @@ func (i *Indexer) HandlerVacaTorrentIndexer(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	// supported query params: q, season, episode, page, filter_results
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	if page == "" {
 		page = "1"

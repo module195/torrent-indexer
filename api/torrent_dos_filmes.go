@@ -37,7 +37,7 @@ func (i *Indexer) HandlerTorrentDosFilmesIndexer(w http.ResponseWriter, r *http.
 	ctx := r.Context()
 	// supported query params: q, season, episode, page, filter_results
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	// URL encode query param
 	q = url.QueryEscape(q)

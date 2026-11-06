@@ -36,7 +36,7 @@ func (i *Indexer) HandlerBetorIndexer(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	var targetURL string
 	base := strings.TrimRight(metadata.URL, "/")

@@ -35,7 +35,7 @@ func (i *Indexer) HandlerBludvRuIndexer(w http.ResponseWriter, r *http.Request) 
 
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 	if page == "" {
 		page = "1"
 	}
