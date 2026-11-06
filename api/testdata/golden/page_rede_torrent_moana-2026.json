@@ -1,0 +1,64 @@
+{
+  "page": {
+    "Title": "Moana",
+    "OriginalTitle": "Moana",
+    "Year": "2026",
+    "IMDB": "tt27419466",
+    "Series": false,
+    "Date": "2026-10-21T16:58:45-03:00"
+  },
+  "releases": [
+    {
+      "Title": "Moana 2026 1080p WEB-DL x264 DUAL 5 1",
+      "MagnetLink": "magnet:?xt=urn:btih:4otzjkrcktpqb3rukf4r3ntl3iwvoi2n\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026dn=BAIXARAPIDO.COM-.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Moana.2026.1080p.WEB-DL.x264.DUAL.5.1",
+      "InfoHash": "e3a794aa2254df00ee3451791db66bda2d57234d",
+      "Size": "2.67 GB",
+      "Trackers": [
+        "udp://tracker.opentrackr.org:1337/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    },
+    {
+      "Title": "Moana 2026 1080p FULL HD WEB-DL DUAL 5 1",
+      "MagnetLink": "magnet:?xt=urn:btih:wjiun4auzhock25fxlfgmoexir63p2iu\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026dn=BAIXARAPIDO.COM-.WEB-DL.1080P.SEM-COMPACTA%C3%87%C3%83O.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Moana.2026.1080p.FULL.HD.WEB-DL.DUAL.5.1",
+      "InfoHash": "b25146f014c9dc256ba5baca663897447db7e914",
+      "Size": "6.21 GB",
+      "Trackers": [
+        "udp://tracker.opentrackr.org:1337/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    },
+    {
+      "Title": "Moana 2026 WEB-DL 2160p x265 DV HDR10 DUAL 5 1",
+      "MagnetLink": "magnet:?xt=urn:btih:943c3c4c9bdd2479ae9947525950d0453dbddfb1\u0026xl=13100333204\u0026tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.trackerfix.com%3A83%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.trackerfix.com%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Feddie4.nl%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fzer0day.ch%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fglotorrents.pw%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftorrent.gresille.org%3A80%2Fannounce\u0026tr=udp%3A%2F%2Fp4p.arenabg.ch%3A1337\u0026tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337\u0026dn=BAIXARAPIDO.COM-.WEB-DL.2160P.SEM-COMPACTA%C3%87%C3%83O.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Moana+2026+WEB-DL+2160p+x265+DV+HDR10+DUAL+5.1",
+      "InfoHash": "943c3c4c9bdd2479ae9947525950d0453dbddfb1",
+      "Size": "12.20 GB",
+      "Trackers": [
+        "udp://tracker.openbittorrent.com:80/announce",
+        "udp://tracker.trackerfix.com:83/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://tracker.trackerfix.com:80/announce",
+        "udp://tracker.coppersurfer.tk:6969/announce",
+        "udp://tracker.leechers-paradise.org:6969/announce",
+        "udp://eddie4.nl:6969/announce",
+        "udp://p4p.arenabg.com:1337/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://zer0day.ch:1337/announce",
+        "udp://glotorrents.pw:6969/announce",
+        "udp://torrent.gresille.org:80/announce",
+        "udp://p4p.arenabg.ch:1337",
+        "udp://tracker.internetwarriors.net:1337"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    }
+  ]
+}

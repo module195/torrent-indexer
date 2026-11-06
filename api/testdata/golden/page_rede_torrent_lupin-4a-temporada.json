@@ -1,0 +1,25 @@
+{
+  "page": {
+    "Title": "Lupin - 4ª Temporada",
+    "OriginalTitle": "Lupin S04",
+    "Year": "2026",
+    "IMDB": "",
+    "Series": true,
+    "Date": "2026-10-23T21:17:54-03:00"
+  },
+  "releases": [
+    {
+      "Title": "Lupin S04 1080p x265 WEB-DL DUAL 5 1",
+      "MagnetLink": "magnet:?xt=urn:btih:qkiwaem2ugk4rrjxf4zrkofsavtv5md4\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026dn=BAIXARAPIDO.COM-.TEMPORADA-04.WEB-DL.1080P.MKV.5.1.-DUBLADO-DUAL-AUDIO-.Lupin.S04.1080p.x265.WEB-DL.DUAL.5.1",
+      "InfoHash": "829160119aa195c8c5372f331538b205675eb07c",
+      "Size": "6.37 GB",
+      "Trackers": [
+        "udp://tracker.opentrackr.org:1337/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Francês"
+      ]
+    }
+  ]
+}
