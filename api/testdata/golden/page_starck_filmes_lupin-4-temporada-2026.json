@@ -1,0 +1,37 @@
+{
+  "page": {
+    "Title": "Lupin 4ª Temporada",
+    "OriginalTitle": "Lupin",
+    "Year": "2026",
+    "Date": "0001-01-01T00:00:00Z"
+  },
+  "releases": [
+    {
+      "Title": "Lupin.2026.S04.WEB-DL.1080p.x264.DUAL.5.1-STARCKFILMES",
+      "MagnetLink": "magnet:?xt=urn:btih:e0bd6b939a13644237518abf0412f57f09bdcb88\u0026dn=Lupin.2026.S04.WEB-DL.1080p.x264.DUAL.5.1-STARCKFILMES\u0026xl=9085516204\u0026tr=udp%3A%2F%2Ftracker.birkenwald.de%3A6969%2Fannounce\u0026tr=https%3A%2F%2Ftrackers.mlsub.net%3A443%2Fannounce\u0026tr=udp%3A%2F%2Fmartin-gebhardt.eu%3A25%2Fannounce\u0026tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce\u0026tr=udp%3A%2F%2Fr.l5.ca%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fu6.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fp2p.publictracker.xyz%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fu4.trakx.crim.ist%3A1337%2Fannounce\u0026tr=http%3A%2F%2Ftracker.vraphim.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.fnix.net%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fttk2.nbaonlineservice.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fevan.im%3A6969%2Fannounce\u0026tr=https%3A%2F%2Ftracker.yemekyedim.com%3A443%2Fannounce",
+      "InfoHash": "e0bd6b939a13644237518abf0412f57f09bdcb88",
+      "Size": "8.46 GB",
+      "Trackers": [
+        "udp://tracker.birkenwald.de:6969/announce",
+        "https://trackers.mlsub.net:443/announce",
+        "udp://martin-gebhardt.eu:25/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://r.l5.ca:6969/announce",
+        "udp://u6.trakx.crim.ist:1337/announce",
+        "udp://p2p.publictracker.xyz:6969/announce",
+        "udp://u4.trakx.crim.ist:1337/announce",
+        "http://tracker.vraphim.com:6969/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://tracker.fnix.net:6969/announce",
+        "udp://ttk2.nbaonlineservice.com:6969/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://evan.im:6969/announce",
+        "https://tracker.yemekyedim.com:443/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "page": {
+    "Title": "Homem-Aranha: Um Novo Dia",
+    "OriginalTitle": "Spider-Man: Brand New Day",
+    "Year": "2026",
+    "Date": "0001-01-01T00:00:00Z"
+  },
+  "releases": [
+    {
+      "Title": "Homem-Aranha.Um.Novo.Dia.2026.WEB-DL.1080p.x264.DUAL.5.1-STARCKFILMES",
+      "MagnetLink": "magnet:?xt=urn:btih:2a6b5b14ef835da8e3d595c4d185ebe43d093e5d\u0026dn=Homem-Aranha.Um.Novo.Dia.2026.WEB-DL.1080p.x264.DUAL.5.1-STARCKFILMES\u0026xl=3786680563\u0026tr=udp%3A%2F%2Fu6.trakx.crim.ist%3A1337%2Fannounce\u0026tr=https%3A%2F%2Ftrackers.mlsub.net%3A443%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.birkenwald.de%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fevan.im%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fttk2.nbaonlineservice.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fp2p.publictracker.xyz%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fr.l5.ca%3A6969%2Fannounce\u0026tr=https%3A%2F%2Ftracker.yemekyedim.com%3A443%2Fannounce\u0026tr=udp%3A%2F%2Fu4.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fmartin-gebhardt.eu%3A25%2Fannounce\u0026tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.fnix.net%3A6969%2Fannounce\u0026tr=http%3A%2F%2Ftracker.vraphim.com%3A6969%2Fannounce",
+      "InfoHash": "2a6b5b14ef835da8e3d595c4d185ebe43d093e5d",
+      "Size": "3.53 GB",
+      "Trackers": [
+        "udp://u6.trakx.crim.ist:1337/announce",
+        "https://trackers.mlsub.net:443/announce",
+        "udp://tracker.birkenwald.de:6969/announce",
+        "udp://evan.im:6969/announce",
+        "udp://ttk2.nbaonlineservice.com:6969/announce",
+        "udp://p2p.publictracker.xyz:6969/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://r.l5.ca:6969/announce",
+        "https://tracker.yemekyedim.com:443/announce",
+        "udp://u4.trakx.crim.ist:1337/announce",
+        "udp://martin-gebhardt.eu:25/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.fnix.net:6969/announce",
+        "http://tracker.vraphim.com:6969/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    },
+    {
+      "Title": "Homem-Aranha.Um.Novo.Dia.2026.WEB-DL.1080p.x264.FULLHD.DUAL.5.1-STARCKFILMES",
+      "MagnetLink": "magnet:?xt=urn:btih:e7ca9615df5424db2e00a0f8d9f4c617c01a86b8\u0026dn=Homem-Aranha.Um.Novo.Dia.2026.WEB-DL.1080p.x264.FULLHD.DUAL.5.1-STARCKFILMES\u0026xl=10350192292\u0026tr=udp%3A%2F%2Fu4.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fttk2.nbaonlineservice.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.fnix.net%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fr.l5.ca%3A6969%2Fannounce\u0026tr=https%3A%2F%2Ftrackers.mlsub.net%3A443%2Fannounce\u0026tr=https%3A%2F%2Ftracker.yemekyedim.com%3A443%2Fannounce\u0026tr=udp%3A%2F%2Fu6.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.birkenwald.de%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fp2p.publictracker.xyz%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fevan.im%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fmartin-gebhardt.eu%3A25%2Fannounce\u0026tr=http%3A%2F%2Ftracker.vraphim.com%3A6969%2Fannounce",
+      "InfoHash": "e7ca9615df5424db2e00a0f8d9f4c617c01a86b8",
+      "Size": "9.64 GB",
+      "Trackers": [
+        "udp://u4.trakx.crim.ist:1337/announce",
+        "udp://ttk2.nbaonlineservice.com:6969/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.fnix.net:6969/announce",
+        "udp://r.l5.ca:6969/announce",
+        "https://trackers.mlsub.net:443/announce",
+        "https://tracker.yemekyedim.com:443/announce",
+        "udp://u6.trakx.crim.ist:1337/announce",
+        "udp://tracker.birkenwald.de:6969/announce",
+        "udp://p2p.publictracker.xyz:6969/announce",
+        "udp://evan.im:6969/announce",
+        "udp://martin-gebhardt.eu:25/announce",
+        "http://tracker.vraphim.com:6969/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    },
+    {
+      "Title": "Homem-Aranha - Um Novo Dia 2026 WEB-DL 2160p x265 DV HDR10+ DUAL 5.1",
+      "MagnetLink": "magnet:?xt=urn:btih:5c0e393cc4585af21cbf2d1a1a63c1e4906161da\u0026dn=Homem-Aranha%20-%20Um%20Novo%20Dia%202026%20WEB-DL%202160p%20x265%20DV%20HDR10%2B%20DUAL%205.1\u0026xl=27859157829\u0026tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.trackerfix.com%3A83%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.trackerfix.com%3A80%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Feddie4.nl%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fzer0day.ch%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fglotorrents.pw%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftorrent.gresille.org%3A80%2Fannounce\u0026tr=udp%3A%2F%2Fp4p.arenabg.ch%3A1337\u0026tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337",
+      "InfoHash": "5c0e393cc4585af21cbf2d1a1a63c1e4906161da",
+      "Size": "25.95 GB",
+      "Trackers": [
+        "udp://tracker.openbittorrent.com:80/announce",
+        "udp://tracker.trackerfix.com:83/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://tracker.trackerfix.com:80/announce",
+        "udp://tracker.coppersurfer.tk:6969/announce",
+        "udp://tracker.leechers-paradise.org:6969/announce",
+        "udp://eddie4.nl:6969/announce",
+        "udp://p4p.arenabg.com:1337/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://zer0day.ch:1337/announce",
+        "udp://glotorrents.pw:6969/announce",
+        "udp://torrent.gresille.org:80/announce",
+        "udp://p4p.arenabg.ch:1337",
+        "udp://tracker.internetwarriors.net:1337"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "page": {
+    "Title": "Anaconda: Coleção",
+    "OriginalTitle": "Anaconda",
+    "Year": "1997",
+    "Date": "0001-01-01T00:00:00Z"
+  },
+  "releases": [
+    {
+      "Title": "Anaconda.Coleção.1997.2009.BluRay.1080p.x264.DUAL-STARCKFILMES",
+      "MagnetLink": "magnet:?xt=urn:btih:dba9c38dee6c326cb1af45c4ce6b7bfc5edc9aee\u0026dn=Anaconda.Cole%C3%A7%C3%A3o.1997.2009.BluRay.1080p.x264.DUAL-STARCKFILMES\u0026xl=6297789570\u0026tr=http%3A%2F%2Ftracker.vraphim.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fevan.im%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fp2p.publictracker.xyz%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.fnix.net%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.birkenwald.de%3A6969%2Fannounce\u0026tr=https%3A%2F%2Ftrackers.mlsub.net%3A443%2Fannounce\u0026tr=https%3A%2F%2Ftracker.yemekyedim.com%3A443%2Fannounce\u0026tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce\u0026tr=udp%3A%2F%2Fmartin-gebhardt.eu%3A25%2Fannounce\u0026tr=udp%3A%2F%2Fr.l5.ca%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fu6.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fu4.trakx.crim.ist%3A1337%2Fannounce\u0026tr=udp%3A%2F%2Fttk2.nbaonlineservice.com%3A6969%2Fannounce\u0026tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce",
+      "InfoHash": "dba9c38dee6c326cb1af45c4ce6b7bfc5edc9aee",
+      "Size": "5.87 GB",
+      "Trackers": [
+        "http://tracker.vraphim.com:6969/announce",
+        "udp://evan.im:6969/announce",
+        "udp://p2p.publictracker.xyz:6969/announce",
+        "udp://tracker.fnix.net:6969/announce",
+        "udp://tracker.birkenwald.de:6969/announce",
+        "https://trackers.mlsub.net:443/announce",
+        "https://tracker.yemekyedim.com:443/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://martin-gebhardt.eu:25/announce",
+        "udp://r.l5.ca:6969/announce",
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://u6.trakx.crim.ist:1337/announce",
+        "udp://u4.trakx.crim.ist:1337/announce",
+        "udp://ttk2.nbaonlineservice.com:6969/announce",
+        "udp://explodie.org:6969/announce"
+      ],
+      "Audio": [
+        "Português",
+        "Inglês"
+      ]
+    }
+  ]
+}
