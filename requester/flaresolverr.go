@@ -434,7 +434,7 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 
 	// Parse the response
 	var response Response
-	err = json.NewDecoder(resp.Body).Decode(&response)
+	err = json.NewDecoder(io.LimitReader(resp.Body, flaresolverrMaxBody)).Decode(&response)
 	if err != nil {
 		return nil, false, err
 	}

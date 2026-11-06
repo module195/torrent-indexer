@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -39,6 +40,9 @@ type MetadataClient struct {
 	httpClient *http.Client
 	c          *cache.Redis
 }
+
+// maxMetadataBody bounds the Magnet Metadata API response.
+const maxMetadataBody = 1 << 20
 
 func NewClient(baseURL string, timeout time.Duration, c *cache.Redis) *MetadataClient {
 	return &MetadataClient{
@@ -101,7 +105,7 @@ func (c *MetadataClient) FetchMetadata(ctx context.Context, magnetURI string) (*
 	}
 
 	var metadata MetadataResponse
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBody)).Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

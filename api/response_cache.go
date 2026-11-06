@@ -13,6 +13,7 @@ import (
 
 	"github.com/module195/torrent-indexer/cache"
 	"github.com/module195/torrent-indexer/logging"
+	"github.com/module195/torrent-indexer/utils"
 	"github.com/xhit/go-str2duration/v2"
 )
 
@@ -161,7 +162,15 @@ func (rc *ResponseCache) Wrap(label string, next http.HandlerFunc) http.HandlerF
 			rc.indexer.metrics.CacheMisses.WithLabelValues("indexer_response").Inc()
 		}
 
-		ch := rc.sf.DoChan(key, func() (interface{}, error) {
+		ch := rc.sf.DoChan(key, func() (out interface{}, err error) {
+			// the handler runs here, outside the net/http goroutine, so its
+			// panics are not recovered by the server: answer 502 instead
+			defer func() {
+				if r := recover(); r != nil {
+					_ = utils.PanicError(r, "indexer handler "+label)
+					out, err = capturedResponse{status: http.StatusBadGateway, contentType: "application/json", body: []byte(`{"error":"internal error"}`)}, nil
+				}
+			}()
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), responseCacheFetchTimeout)
 			defer cancel()
 			bw := &bufferedWriter{header: http.Header{}}

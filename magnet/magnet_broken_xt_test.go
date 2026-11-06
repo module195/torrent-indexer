@@ -18,3 +18,18 @@ func TestParseMagnetUriShortHashStillFails(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 }
+
+// A 32-character base32 xt with '=' padding decodes to fewer than 20 bytes.
+// It used to panic, which ended the process when a scraped page carried it.
+func TestParseMagnetUriPaddedBase32IsAnError(t *testing.T) {
+	for _, xt := range []string{
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAA===",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAA====",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAA======",
+	} {
+		if _, err := ParseMagnetUri("magnet:?xt=urn:btih:" + xt + "&dn=x"); err == nil {
+			t.Fatalf("xt %s: expected an error", xt)
+		}
+	}
+}

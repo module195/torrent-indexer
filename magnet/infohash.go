@@ -46,7 +46,8 @@ func (t *T) FromHexString(s string) (err error) {
 		return
 	}
 	if n != Size {
-		panic(n)
+		err = fmt.Errorf("hash hex string decodes to %d bytes, want %d", n, Size)
+		return
 	}
 	return
 }
