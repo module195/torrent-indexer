@@ -38,7 +38,7 @@ func (i *Indexer) HandlerBaixandoTorrentsHDIndexer(w http.ResponseWriter, r *htt
 
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	q = url.QueryEscape(q)
 	targetURL := metadata.URL

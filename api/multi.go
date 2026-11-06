@@ -570,13 +570,25 @@ func multiQueries(raw []string) []string {
 	return out
 }
 
+// maxMultiIndexers bounds the "indexers" list. There are far fewer real
+// indexers; the margin keeps unknown names reported as skipped. Without a cap
+// a 1 MiB request line carried ~75k names: ~9 s of CPU in the quadratic
+// dedup and an 8 MB response of skipped entries.
+const maxMultiIndexers = 32
+
 // multiIndexerNames parses the "indexers" CSV; empty means every active one.
 func multiIndexerNames(csv string) []string {
 	var out []string
+	seen := map[string]bool{}
 	for _, n := range strings.Split(csv, ",") {
 		n = strings.ToLower(strings.TrimSpace(n))
-		if n != "" && !slices.Contains(out, n) {
-			out = append(out, n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+		if len(out) == maxMultiIndexers {
+			break
 		}
 	}
 	if len(out) == 0 {

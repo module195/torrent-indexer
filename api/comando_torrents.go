@@ -52,7 +52,7 @@ func (i *Indexer) HandlerComandoIndexer(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	// supported query params: q, season, episode, page, filter_results
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	// URL encode query param
 	q = url.QueryEscape(q)

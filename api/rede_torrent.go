@@ -42,7 +42,7 @@ func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 	q := r.URL.Query().Get("q")
-	page := r.URL.Query().Get("page")
+	page := pageParam(r)
 
 	targetURL := redeTorrentListingURL(metadata, q, page)
 
