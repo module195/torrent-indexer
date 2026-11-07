@@ -115,9 +115,25 @@ func TestGetDocumentCoalesceIsPerURL(t *testing.T) {
 }
 
 // Quem desiste não derruba o download compartilhado: o outro pedido recebe o corpo.
+//
+// O teste não depende de o segundo pedido entrar no fetch em andamento antes
+// do release (com -race sob carga, 50 ms nem sempre bastam e ele faz um fetch
+// próprio). O que prova a regra é o primeiro fetch ir até o fim sem ter o
+// contexto cancelado pelo cliente: se o cancelamento o derrubasse, o servidor
+// veria a conexão fechada antes de responder.
 func TestGetDocumentCoalesceSurvivesCallerCancel(t *testing.T) {
 	release := make(chan struct{})
-	srv, hits := slowSite(t, release)
+	var hits, completed atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		n := hits.Add(1)
+		<-release
+		if n == 1 && req.Context().Err() == nil {
+			completed.Store(1)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, okPage)
+	}))
+	t.Cleanup(srv.Close)
 	r := newTestRequester(t)
 	r.coalesce = true
 
@@ -149,7 +165,7 @@ func TestGetDocumentCoalesceSurvivesCallerCancel(t *testing.T) {
 	if b := <-bodyc; b != okPage {
 		t.Fatalf("segundo pedido = %q", b)
 	}
-	if got := hits.Load(); got != 1 {
-		t.Fatalf("site recebeu %d pedidos, want 1", got)
+	if completed.Load() != 1 {
+		t.Fatal("o fetch compartilhado foi cancelado junto com quem desistiu")
 	}
 }
