@@ -3,11 +3,14 @@ package requester
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -40,12 +43,32 @@ type Requster struct {
 	c                         *cache.Redis
 	httpClient                *http.Client
 	shortLivedCacheExpiration time.Duration
+	// allowPrivateHosts turns off the destination checks of netguard.go
+	allowPrivateHosts atomic.Bool
 }
 
 func NewRequester(fs *FlareSolverr, c *cache.Redis, timeout time.Duration) *Requster {
-	httpClient := &http.Client{
-		Timeout: timeout,
+	r := &Requster{
+		fs:                        fs,
+		c:                         c,
+		shortLivedCacheExpiration: 30 * time.Minute,
+		// Phase 2 (opt-in): concurrent requests for the same URL share one fetch
+		coalesce: os.Getenv("REQUEST_COALESCE") == "true",
+	}
+	if os.Getenv("REQUESTER_ALLOW_PRIVATE_HOSTS") == "true" {
+		r.AllowPrivateHosts()
+	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   r.dialControl,
+	}
+	r.httpClient = &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: checkRedirect,
 		Transport: &http.Transport{
+			// no Proxy: dialControl must see the address of the site itself
+			DialContext:         dialer.DialContext,
 			DisableCompression:  false,
 			MaxIdleConns:        100,              // Increase connection pool
 			MaxIdleConnsPerHost: 10,               // More connections per host
@@ -54,15 +77,7 @@ func NewRequester(fs *FlareSolverr, c *cache.Redis, timeout time.Duration) *Requ
 			ForceAttemptHTTP2:   true,             // Use HTTP/2 when possible
 		},
 	}
-
-	return &Requster{
-		fs:                        fs,
-		httpClient:                httpClient,
-		c:                         c,
-		shortLivedCacheExpiration: 30 * time.Minute,
-		// Phase 2 (opt-in): concurrent requests for the same URL share one fetch
-		coalesce: os.Getenv("REQUEST_COALESCE") == "true",
-	}
+	return r
 }
 
 func (i *Requster) SetShortLivedCacheExpiration(expiration time.Duration) {
@@ -125,6 +140,12 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	var body io.ReadCloser
 	var bodyByte []byte
 
+	// the URL may come from a scraped link: refuse internal destinations
+	// before either the plain client or FlareSolverr goes there
+	if err := i.checkDestination(ctx, url); err != nil {
+		return nil, err
+	}
+
 	// try request with plain client
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -141,6 +162,11 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	}
 
 	resp, err := i.httpClient.Do(req)
+	if err != nil && errors.Is(err, ErrBlockedDestination) {
+		// a redirect into the internal network: FlareSolverr would follow
+		// the same redirect, so there is no fallback
+		return nil, fmt.Errorf("failed to do request for url %s: %w", url, err)
+	}
 	if err != nil {
 		// try request with flare solverr
 		body, err = i.fs.Get(ctx, url, 3)
