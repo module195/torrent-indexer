@@ -1,0 +1,18 @@
+# Mantém atualizados os SHAs das Actions e os digests das imagens, que agora
+# estão fixados (pipeline.yml, Dockerfile, pipeline.dockerfile, compose).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /.github/workflows
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

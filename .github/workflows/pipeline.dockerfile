@@ -1,6 +1,6 @@
 #####################################################
 ### Copy platform specific binary
-FROM bash AS copy-binary
+FROM bash:latest@sha256:bfe8f6d356f2944ec5ad456e44620924862263aa0717036b3c2cdce0ee4c0af0 AS copy-binary
 ARG TARGETPLATFORM
 
 RUN echo "Target Platform = ${TARGETPLATFORM}"
@@ -17,11 +17,14 @@ RUN chmod +x /torrent-indexer
 
 #####################################################
 ### Build Final Image
-FROM alpine:3.24 AS release
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS release
 LABEL maintainer="felipevm97@gmail.com"
 
 COPY --from=copy-binary /torrent-indexer /app/
 
 WORKDIR /app
+
+# sem root: o processo não grava em disco
+USER 10001
 
 ENTRYPOINT ["/app/torrent-indexer"]

@@ -11,6 +11,11 @@ services:
       - 8080:7006
     networks:
       - indexer
+      - solver
+    # o processo não grava em disco e não precisa ganhar privilégios
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - redis
       - flaresolverr
@@ -35,7 +40,8 @@ services:
 
       ## Meilisearch: pesquisa no catálogo local (/search) e no dump do betor
       - MEILISEARCH_ADDRESS=http://meilisearch:7700
-      - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-change-me-please}
+      # Obrigatória: sem ela o compose não sobe (antes caía numa chave pública conhecida)
+      - MEILISEARCH_KEY=${MEILI_MASTER_KEY:?defina MEILI_MASTER_KEY}
       # Liga/desliga a sincronização do dump do betor (false desliga mesmo com BETOR_DUMP_URL)
       # - BETOR_DUMP=true
       # - BETOR_DUMP_URL=https://catalogo-data.betor.top/items.json
@@ -47,7 +53,7 @@ services:
       # - MAGNET_METADATA_API_TIMEOUT_SECONDS=10
 
   redis:
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     container_name: redis
     restart: unless-stopped
     networks:
@@ -56,22 +62,26 @@ services:
   flaresolverr:
     # Resolve o desafio do Cloudflare nos sites que o exigem.
     # Alternativa: ghcr.io/thephaseless/byparr (detetado sozinho, sem sessões).
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    # Versão fixa (o Dependabot propõe as novas).
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     container_name: flaresolverr
     restart: unless-stopped
     environment:
       - LOG_LEVEL=info
+    # Rede própria: o navegador do FlareSolverr abre páginas escolhidas por
+    # sites de terceiros e segue os redirects delas, então ele não enxerga o
+    # Redis nem o Meilisearch.
     networks:
-      - indexer
+      - solver
 
   meilisearch:
     # Versão fixa: o formato dos dados do Meilisearch muda entre versões.
-    image: getmeili/meilisearch:v1.55
+    image: getmeili/meilisearch:v1.55@sha256:88f2a08eb9532cc54a60d8fd014a23bf5cfda33d0c01ecbbaca9b4b463e17466
     container_name: meilisearch
     restart: unless-stopped
     environment:
       - MEILI_NO_ANALYTICS=true
-      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-change-me-please}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:?defina MEILI_MASTER_KEY}
     volumes:
       - meili-data:/meili_data
     networks:
@@ -107,3 +117,4 @@ volumes:
 
 networks:
   indexer:
+  solver:
