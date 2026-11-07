@@ -11,12 +11,16 @@ Visit [https://torrent-indexer.darklyn.org/](https://torrent-indexer.darklyn.org
 
 ## Supported sites
 
-- [comando-torrents](https://comando.la/)
-- [bludv](https://bludvfilmes.tv/)
-- [torrent-dos-filmes](https://torrentdosfilmes.se/)
-- [starck-filmes](https://starckfilmes-v27.com/)
-- [rede-torrent](https://redestorrents.com/)
-- [vaca-torrent](https://vacatorrentmov.com/)
+Active indexers and their default addresses (checked on 07/11/2026). Each one can be overridden with its `INDEXER_*_URL` variable.
+
+- [bludv_ru](https://bludv.ru/)
+- [rede_torrent](https://redestorrents.com/)
+- [starck-filmes](https://starckfilmes-v29.com/)
+- [betor](https://catalogo.betor.top/)
+- [torrentfilmeshds](https://www.torrentfilmehds.net/)
+- [torrent-dos-filmes](https://torrentdosfilmes-v2.xyz/)
+- [comando_torrents](https://comando1.com/)
+- [baixarapido](https://baixarapido.com/)
 
 ## Deploy
 

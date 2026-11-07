@@ -23,7 +23,7 @@ import (
 // redirecting the old ones, so an outdated default keeps working.
 var starck_filmes = IndexerMeta{
 	Label:       "starck_filmes",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://starckfilmes-v28.com/"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_STARCK_FILMES_URL", "https://starckfilmes-v29.com/"),
 	SearchURL:   "?s=",
 	PagePattern: "page/%s/",
 }

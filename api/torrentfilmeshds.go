@@ -25,7 +25,7 @@ import (
 
 var torrentFilmesHDs = IndexerMeta{
 	Label:       "torrentfilmeshds",
-	URL:         utils.GetIndexerURLFromEnv("INDEXER_TORRENTFILMESHDS_URL", "https://www.torrentfilmehds.org"),
+	URL:         utils.GetIndexerURLFromEnv("INDEXER_TORRENTFILMESHDS_URL", "https://www.torrentfilmehds.net"),
 	SearchURL:   "?s=",
 	PagePattern: "page/%s/",
 }
