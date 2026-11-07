@@ -17,7 +17,10 @@ import (
 func newTestRequester(t *testing.T) *Requster {
 	t.Helper()
 	t.Setenv("REDIS_HOST", "127.0.0.1")
-	return NewRequester(nil, cache.NewRedis(), 5*time.Second)
+	r := NewRequester(nil, cache.NewRedis(), 5*time.Second)
+	// the test sites are httptest servers on 127.0.0.1
+	r.AllowPrivateHosts()
+	return r
 }
 
 const okPage = "<html><body><div class=\"post\">ok</div></body></html>"

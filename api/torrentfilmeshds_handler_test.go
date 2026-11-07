@@ -62,7 +62,10 @@ func newTfhdsTestIndexer(t *testing.T, site *httptest.Server) *Indexer {
 	torrentFilmesHDs.URL = site.URL + "/"
 	t.Cleanup(func() { torrentFilmesHDs.URL = old })
 	r := cache.NewRedis()
-	return NewIndexers(IndexersConfig{}, r, monitoring.NewMetrics(), requester.NewRequester(nil, r, 2*time.Second), nil, nil)
+	req := requester.NewRequester(nil, r, 2*time.Second)
+	// the test site is an httptest server on 127.0.0.1
+	req.AllowPrivateHosts()
+	return NewIndexers(IndexersConfig{}, r, monitoring.NewMetrics(), req, nil, nil)
 }
 
 // A site failure answers with the JSON error body every indexer uses.
