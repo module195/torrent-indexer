@@ -388,17 +388,24 @@ func AddSimilarityCheck(i *Indexer, r *http.Request, torrents []schema.IndexedTo
 			// A release that names only other seasons (the 6ª Temporada
 			// pack for "Round 6 temporada 2") is never it, however close
 			// the names are
-			if info := releaseInfoOf(it); qq.season > 0 && !info.empty() && !info.hasSeason(qq.season) {
+			// parsing the release name is the costly part of this filter:
+			// skip it when the query names no season or episode, and parse
+			// it once when it does
+			var info releaseInfo
+			if qq.season > 0 || episodeQuery {
+				info = releaseInfoOf(it)
+			}
+			if qq.season > 0 && !info.empty() && !info.hasSeason(qq.season) {
 				return false
 			}
 			if episodeQuery {
 				// Must have the episode OR very high similarity; a release
 				// that names other episodes (S05E02 for S05E03) is never it,
 				// however much "temporada" it shares with the query
-				if releaseHasEpisode(it, qq.season, qq.episode) {
+				if info.hasEpisode(qq.season, qq.episode) {
 					return it.Similarity >= threshold
 				}
-				return len(releaseInfoOf(it).episodes) == 0 && it.Similarity >= max(threshold, 0.48)
+				return len(info.episodes) == 0 && it.Similarity >= max(threshold, 0.48)
 			}
 			return it.Similarity >= threshold
 		})
@@ -475,7 +482,12 @@ func releaseInfoOf(it schema.IndexedTorrent) releaseInfo {
 // releaseHasEpisode reports whether the release names that very episode
 // (S05E03, S05E01-E04): a season pack does not count, as before.
 func releaseHasEpisode(it schema.IndexedTorrent, season, episode int) bool {
-	for _, e := range releaseInfoOf(it).episodes {
+	return releaseInfoOf(it).hasEpisode(season, episode)
+}
+
+// hasEpisode reports whether the release names that very episode.
+func (info releaseInfo) hasEpisode(season, episode int) bool {
+	for _, e := range info.episodes {
 		if (season == 0 || e.season == season) && e.from <= episode && episode <= e.to {
 			return true
 		}
@@ -895,9 +907,12 @@ type releaseInfo struct {
 	all      bool
 }
 
+// releaseDotReplacer turns the separators of release names into spaces.
+var releaseDotReplacer = strings.NewReplacer(".", " ", "_", " ")
+
 func parseReleaseInfo(title string) releaseInfo {
 	s := accentReplacer.Replace(strings.ToLower(title))
-	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
+	s = releaseDotReplacer.Replace(s)
 	s = reGluedEpisode.ReplaceAllString(s, "$1 $2")
 	s = reWhitespace.ReplaceAllString(s, " ")
 
