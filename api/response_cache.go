@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -126,6 +127,24 @@ func wantsFresh(r *http.Request) bool {
 	return fresh
 }
 
+// responseCacheKey is the key of the cached response of indexer label for the
+// query q (nocache already removed).
+func responseCacheKey(label string, q url.Values) string {
+	return cache.Key(cache.KindResp, label+":"+q.Encode(), "")
+}
+
+// Cached reports whether a response of indexer label for the query q is in
+// the cache right now, so a Wrap'd call would answer from it. False when the
+// cache is off for the indexer or Redis fails.
+func (rc *ResponseCache) Cached(ctx context.Context, label string, q url.Values) bool {
+	// same "0 = off" as ttlFor, without its log line on a bad value
+	if rc == nil || os.Getenv(ttlEnvName(label)) == "0" {
+		return false
+	}
+	ok, err := rc.redis.Exists(ctx, responseCacheKey(label, q))
+	return err == nil && ok
+}
+
 // Wrap returns next with response caching/coalescing for the given indexer.
 // A nil receiver (feature disabled), or a per-indexer TTL of 0, only adds
 // "X-Cache: BYPASS"; the body is whatever next writes.
@@ -147,7 +166,7 @@ func (rc *ResponseCache) Wrap(label string, next http.HandlerFunc) http.HandlerF
 			return
 		}
 		fresh := wantsFresh(r)
-		key := cache.Key(cache.KindResp, label+":"+r.URL.Query().Encode(), "")
+		key := responseCacheKey(label, r.URL.Query())
 
 		if fresh {
 			rc.indexer.metrics.CacheMisses.WithLabelValues("indexer_response_bypass").Inc()
