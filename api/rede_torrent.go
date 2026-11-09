@@ -31,6 +31,10 @@ var rede_torrent = IndexerMeta{
 // mesmo tempo (a busca traz 20).
 const redeTorrentPageConcurrency = 6
 
+// redeTorrentPeers é o scrape de peers; variável só para o harness de
+// latência (m3_harness_test.go) trocar pelos trackers falsos.
+var redeTorrentPeers = goscrape.GetLeechsAndSeeds
+
 func (i *Indexer) HandlerRedeTorrentIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	metadata := rede_torrent
@@ -251,7 +255,7 @@ func getTorrentsRedeTorrent(ctx context.Context, i *Indexer, link, referer strin
 
 	for _, rel := range releases {
 		go func(rel redeTorrentRelease) {
-			peer, seed, err := goscrape.GetLeechsAndSeeds(ctx, i.redis, i.metrics, rel.InfoHash, rel.Trackers)
+			peer, seed, err := redeTorrentPeers(ctx, i.redis, i.metrics, rel.InfoHash, rel.Trackers)
 			if err != nil {
 				peer, seed = 0, 0
 			}

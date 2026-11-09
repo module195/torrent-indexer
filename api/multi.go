@@ -107,7 +107,16 @@ type MultiHandler struct {
 	// Stats, when set, tells whether a reserve's primary is healthy; without
 	// it every primary counts as healthy.
 	Stats *IndexerStats
+	// CacheProbe, when set, says whether a call already has a cached
+	// response. A secondary that does joins the foreground: it answers in
+	// milliseconds, and as background it was dropped whenever the primaries
+	// finished first.
+	CacheProbe func(ctx context.Context, indexer string, query url.Values) bool
 }
+
+// cacheProbeTimeout bounds the cache lookups for the secondaries; past it
+// they stay in the background as before.
+const cacheProbeTimeout = 50 * time.Millisecond
 
 // NewMultiHandler takes the /indexers/<name> handlers keyed by indexer name.
 func NewMultiHandler(routes map[string]http.HandlerFunc) *MultiHandler {
@@ -214,6 +223,8 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			calls = append(calls, c)
 		}
 	}
+
+	h.promoteCachedSecondaries(r, jobs, forward)
 
 	// The response waits for the foreground calls only; with none (say,
 	// indexers=torrentfilmeshds) the secondaries are the foreground.
@@ -405,16 +416,47 @@ func (h *MultiHandler) primaryCovers(primary string, names []string, q string) b
 	return h.Stats.Healthy(primary)
 }
 
+// promoteCachedSecondaries moves to the foreground the secondary jobs whose
+// response is already cached. Skipped when the request asked for a fresh run
+// (the cache would not be read).
+func (h *MultiHandler) promoteCachedSecondaries(r *http.Request, jobs []multiJob, forward url.Values) {
+	if h.CacheProbe == nil {
+		return
+	}
+	if _, ok := forward[noCacheParam]; ok || strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), cacheProbeTimeout)
+	defer cancel()
+	for i := range jobs {
+		if !jobs[i].background {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if h.CacheProbe(ctx, jobs[i].name, multiSubQuery(forward, jobs[i].q)) {
+			jobs[i].background = false
+		}
+	}
+}
+
+// multiSubQuery is the query string of the sub-call for q.
+func multiSubQuery(forward url.Values, q string) url.Values {
+	vals := url.Values{}
+	for k, v := range forward {
+		vals[k] = v
+	}
+	vals.Set("q", q)
+	return vals
+}
+
 // runMultiCall runs one indexer handler for q and decodes its JSON.
 func runMultiCall(base *http.Request, j multiJob, forward url.Values) multiResult {
 	ctx, cancel := context.WithTimeout(base.Context(), multiCallTimeout)
 	defer cancel()
 
-	vals := url.Values{}
-	for k, v := range forward {
-		vals[k] = v
-	}
-	vals.Set("q", j.q)
+	vals := multiSubQuery(forward, j.q)
 	sub := base.Clone(ctx)
 	sub.URL.Path = "/indexers/" + j.name
 	sub.URL.RawPath = ""

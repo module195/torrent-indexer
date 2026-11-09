@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -580,5 +582,80 @@ func Test_multiHandlerTiers(t *testing.T) {
 	}
 	if !slowRan.Load() {
 		t.Error("the secondary never ran")
+	}
+}
+
+func Test_multiHandlerPromotesCachedSecondary(t *testing.T) {
+	routes := map[string]http.HandlerFunc{
+		"bludv_ru":     fakeIndexer(schema.IndexedTorrent{Title: "A", InfoHash: "aaaa"}),
+		"rede_torrent": fakeIndexer(schema.IndexedTorrent{Title: "B", InfoHash: "bbbb"}),
+		// a cached secondary still answers a little after the primaries
+		"torrentfilmeshds": func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(30 * time.Millisecond)
+			fakeIndexer(schema.IndexedTorrent{Title: "C", InfoHash: "cccc"})(w, r)
+		},
+	}
+	const target = "/indexers/multi?q=matrix&sortBy=seeders&deadline_ms=2000&indexers=bludv_ru,rede_torrent,torrentfilmeshds"
+	stateOf := func(p multiPayload, name string) string {
+		for _, c := range p.Calls {
+			if c.Indexer == name {
+				return c.State
+			}
+		}
+		return ""
+	}
+
+	var probed []string
+	var mu sync.Mutex
+	h := NewMultiHandler(routes)
+	h.CacheProbe = func(_ context.Context, indexer string, q url.Values) bool {
+		mu.Lock()
+		probed = append(probed, indexer+"?"+q.Encode())
+		mu.Unlock()
+		return indexer == "torrentfilmeshds"
+	}
+	_, p := runMulti(t, h, target)
+	if s := stateOf(p, "torrentfilmeshds"); s != "ok" || p.Count != 3 || p.Partial {
+		t.Fatalf("cached secondary: state=%q count=%d partial=%v", s, p.Count, p.Partial)
+	}
+	// only the secondary is probed, with the sub-call's own query
+	if want := []string{"torrentfilmeshds?q=matrix&sortBy=seeders"}; !slices.Equal(probed, want) {
+		t.Errorf("probed %v, want %v", probed, want)
+	}
+
+	// not cached: background as before, the response doesn't wait for it
+	h.CacheProbe = func(context.Context, string, url.Values) bool { return false }
+	_, p = runMulti(t, h, target)
+	if s := stateOf(p, "torrentfilmeshds"); s != "background" || p.Count != 2 {
+		t.Errorf("uncached secondary: state=%q count=%d", s, p.Count)
+	}
+
+	// nocache asks for a fresh run: the cache is not read, so no probe
+	probed = nil
+	h.CacheProbe = func(_ context.Context, indexer string, _ url.Values) bool {
+		mu.Lock()
+		probed = append(probed, indexer)
+		mu.Unlock()
+		return true
+	}
+	_, p = runMulti(t, h, target+"&nocache=1")
+	if len(probed) != 0 || stateOf(p, "torrentfilmeshds") != "background" {
+		t.Errorf("nocache: probed=%v state=%q", probed, stateOf(p, "torrentfilmeshds"))
+	}
+}
+
+func Test_multiSubQueryMatchesCacheKey(t *testing.T) {
+	// the probe key must be the one Wrap computes from the sub-request
+	var got url.Values
+	j := multiJob{name: "torrentfilmeshds", q: "matrix 1999", route: func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}}
+	forward := url.Values{"sortBy": {"seeders"}, "audio": {"pt", "en"}, "imdb": {"tt0133093"}}
+	base := httptest.NewRequest(http.MethodGet, "/indexers/multi?q=x", nil)
+	runMultiCall(base, j, forward)
+	if a, b := responseCacheKey(j.name, got), responseCacheKey(j.name, multiSubQuery(forward, j.q)); a != b {
+		t.Errorf("key mismatch:\n%s\n%s", a, b)
 	}
 }

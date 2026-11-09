@@ -52,6 +52,12 @@ func (r *Redis) SetWithExpiration(ctx context.Context, key string, value []byte,
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 
+// Exists reports whether key is set, without reading its value.
+func (r *Redis) Exists(ctx context.Context, key string) (bool, error) {
+	n, err := r.client.Exists(ctx, key).Result()
+	return n > 0, err
+}
+
 func (r *Redis) Del(ctx context.Context, key string) error {
 	return r.client.Del(ctx, key).Err()
 }
