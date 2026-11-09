@@ -127,11 +127,21 @@ func GetLeechsAndSeeds(ctx context.Context, r *cache.Redis, m *monitoring.Metric
 
 	// two indexers (or two queries of one multi) often bring the same magnet
 	// at the same time; scrape it once and give both the answer
-	v, err, _ := peersFlight.Do(infoHash, func() (interface{}, error) {
-		leech, seed, err := scrapePeers(ctx, r, infoHash, trackers)
+	// the shared scrape outlives a caller that gives up: it runs without
+	// that caller's cancellation, so the others waiting on it still get the
+	// answer and it still reaches the cache
+	flightCtx := context.WithoutCancel(ctx)
+	ch := peersFlight.DoChan(infoHash, func() (interface{}, error) {
+		leech, seed, err := scrapePeers(flightCtx, r, infoHash, trackers)
 		return peers{Leechers: leech, Seeders: seed}, err
 	})
-	p := v.(peers)
+	var res singleflight.Result
+	select {
+	case <-ctx.Done():
+		return 0, 0, ctx.Err()
+	case res = <-ch:
+	}
+	p, err := res.Val.(peers), res.Err
 	if m != nil && m.PeerScrapes != nil {
 		switch {
 		case err != nil:
