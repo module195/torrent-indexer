@@ -14,7 +14,9 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,6 +46,12 @@ var (
 	ErrRemote = errors.New("service unavailable")
 	// ErrRetryLimit is returned when the maximum number of retries is exceeded
 	ErrRetryLimit = errors.New("maximum number of retries exceeded")
+
+	// ErrInternalTracker is returned for a tracker on a loopback, private,
+	// link-local, multicast or unspecified address. Tracker URLs come from
+	// magnets that third parties submit (POST /indexers/manual) and from scraped
+	// sites, so they must not reach the server's own network.
+	ErrInternalTracker = errors.New("tracker resolves to an internal address")
 )
 
 // ScrapeResult represents one result returned by the Scrape method
@@ -193,6 +201,25 @@ type trackerAddr struct {
 
 var trackerAddrs sync.Map // "host:port" -> trackerAddr
 
+// allowPrivateTrackers (TRACKER_SCRAPE_ALLOW_PRIVATE=true) turns off the
+// internal-address check, for a tracker on the same LAN. Atomic because
+// scrape goroutines can outlive the request that started them.
+var allowPrivateTrackers atomic.Bool
+
+func init() {
+	allowPrivateTrackers.Store(os.Getenv("TRACKER_SCRAPE_ALLOW_PRIVATE") == "true")
+}
+
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+func internalIP(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil && (ip4[0] == 0 || cgnat.Contains(ip4)) {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()
+}
+
 func resolveTracker(hostport string, timeout time.Duration) (string, error) {
 	if v, ok := trackerAddrs.Load(hostport); ok {
 		if a := v.(trackerAddr); time.Now().Before(a.expires) {
@@ -203,7 +230,10 @@ func resolveTracker(hostport string, timeout time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if net.ParseIP(host) != nil {
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowPrivateTrackers.Load() && internalIP(ip) {
+			return "", ErrInternalTracker
+		}
 		return hostport, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -220,7 +250,18 @@ func resolveTracker(hostport string, timeout time.Duration) (string, error) {
 		}
 		return "", err
 	}
-	addr := net.JoinHostPort(ips[0].String(), port)
+	var ip net.IP
+	for _, cand := range ips {
+		if allowPrivateTrackers.Load() || !internalIP(cand) {
+			ip = cand
+			break
+		}
+	}
+	if ip == nil {
+		trackerAddrs.Store(hostport, trackerAddr{err: ErrInternalTracker, expires: time.Now().Add(trackerAddrFailTTL)})
+		return "", ErrInternalTracker
+	}
+	addr := net.JoinHostPort(ip.String(), port)
 	trackerAddrs.Store(hostport, trackerAddr{addr: addr, expires: time.Now().Add(trackerAddrTTL)})
 	return addr, nil
 }

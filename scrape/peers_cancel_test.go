@@ -54,6 +54,7 @@ func slowTracker(t *testing.T, delay time.Duration) string {
 // A caller that gives up returns at once, while the scrape it shares with
 // another caller still finishes and answers that one.
 func TestGetLeechsAndSeedsCallerCancelDoesNotFailSharedScrape(t *testing.T) {
+	allowInternalTrackers(t)
 	t.Setenv("REDIS_HOST", "127.0.0.1")
 	resetTrackersMem(t)
 	// no additional trackers: only the local one is scraped

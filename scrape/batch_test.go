@@ -55,6 +55,7 @@ func fakeTracker(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
 }
 
 func TestScrapeBatchedSharesOneRequest(t *testing.T) {
+	allowInternalTrackers(t)
 	tracker, scrapes, maxHashes := fakeTracker(t)
 
 	const n = 10
