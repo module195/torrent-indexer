@@ -214,6 +214,9 @@ func main() {
 	}
 
 	indexers := handler.NewIndexers(icfg, redis, metrics, req, searchIndex, magnetMetadataAPI)
+	if os.Getenv("MANUAL_API_TOKEN") == "" {
+		logging.Warn().Msg("MANUAL_API_TOKEN is not set: POST /indexers/manual is open to anyone who can reach this port")
+	}
 	search := handler.NewMeilisearchHandler(searchIndex)
 
 	// Phase 2 (opt-in): short-lived response cache + coalescing per indexer

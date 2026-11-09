@@ -57,11 +57,12 @@ You can configure the server using the following environment variables:
 - `RESPONSE_CACHE_TTL_<NAME>`: (optional) Per-indexer override of `RESPONSE_CACHE_TTL`, where `NAME` is the indexer key in uppercase with underscores (e.g. `RESPONSE_CACHE_TTL_BETOR=30m`, `RESPONSE_CACHE_TTL_TORRENT_DOS_FILMES=2m`). `0` turns the response cache off for that indexer. Default: `N/A` (uses `RESPONSE_CACHE_TTL`)
 - `MULTI_INDEXER_CONCURRENCY`: (optional) Most `/indexers/multi` calls running at once on one indexer, across all requests, including the ones that outlive their deadline. Default: `3`
 - `MULTI_GLOBAL_CONCURRENCY`: (optional) Most `/indexers/multi` calls running at once in total. Default: `32`
-- `TRACKER_SCRAPE_MAX_ADDITIONAL`: (optional) Max number of UDP trackers from the extra tracker list scraped per torrent (the magnet's own trackers are always used). Default: `N/A` (all)
+- `TRACKER_SCRAPE_MAX_ADDITIONAL`: (optional) Max number of UDP trackers from the extra tracker list scraped per torrent (the magnet's own UDP trackers are always used, up to 20). Default: `N/A` (all)
 - `TRACKER_SCRAPE_CONCURRENCY`: (optional) Global limit of concurrent UDP tracker scrapes. Default: `N/A` (unlimited)
+- `TRACKER_SCRAPE_ALLOW_PRIVATE`: (optional) `true` lets the scraper reach trackers on loopback/private/link-local addresses (e.g. a tracker on your LAN). By default they are skipped, and a magnet's own trackers are capped at 20 UDP entries. Default: `false`
 - `REDIS_NAMESPACED_KEYS`: (optional) `true` prefixes Redis keys by type (`doc:`, `doc:short:`, `peers:`, `meta:`). Old keys expire on their own. Default: `false`
 - `REQUEST_TIMEOUT_MILLISECONDS`: (optional) Timeout for external scraping requests. Default: `5000`
-- `MANUAL_API_TOKEN`: (optional) When set, `POST /indexers/manual` needs `Authorization: Bearer <token>`. Default: `N/A` (open, as before)
+- `MANUAL_API_TOKEN`: (optional) When set, `POST /indexers/manual` needs `Authorization: Bearer <token>`. Default: `N/A` (open, as before; a warning is logged at startup)
 - `MEILISEARCH_ADDRESS`: (optional) The address of the MeiliSearch instance. Default: `N/A`
 - `MEILISEARCH_KEY`: (optional) The API key of the MeiliSearch instance. Default: `N/A`
 - `BETOR_DUMP`: (optional) `true` or `false` to turn the betor dump sync on or off without touching `BETOR_DUMP_URL`. `false` keeps it off even when `BETOR_DUMP_URL` is set; `true` turns it on and uses `https://catalogo-data.betor.top/items.json` when `BETOR_DUMP_URL` is empty. Needs `MEILISEARCH_ADDRESS`. Default: `N/A` (on when `BETOR_DUMP_URL` is set)

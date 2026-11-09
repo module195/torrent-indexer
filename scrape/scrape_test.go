@@ -11,6 +11,7 @@ import (
 // A connect answer carrying another request's transaction id must be
 // rejected (the check used to compare the id with itself).
 func TestConnectRejectsWrongTransactionID(t *testing.T) {
+	allowInternalTrackers(t)
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

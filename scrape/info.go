@@ -71,11 +71,16 @@ func peersTTL(seeders int) time.Duration {
 var (
 	// maxAdditionalTrackers caps how many trackers from the dynamic/static
 	// list are scraped (the list is ordered best-first). The magnet's own
-	// trackers are always scraped.
+	// trackers are always scraped (up to maxMagnetTrackers).
 	maxAdditionalTrackers = envInt("TRACKER_SCRAPE_MAX_ADDITIONAL")
 	// scrapeSem bounds concurrent UDP scrapes across all requests.
 	scrapeSem = newSemaphore(envInt("TRACKER_SCRAPE_CONCURRENCY"))
 )
+
+// maxMagnetTrackers caps the magnet's own UDP trackers. A magnet posted to
+// /indexers/manual can carry hundreds of tr= entries, and each one is a
+// scrape (S-02, security audit 2026-11-09).
+var maxMagnetTrackers = 20
 
 func envInt(name string) int {
 	n, err := strconv.Atoi(os.Getenv(name))
@@ -159,6 +164,7 @@ var peersFlight singleflight.Group
 
 func scrapePeers(ctx context.Context, r *cache.Redis, infoHash string, trackers []string) (int, int, error) {
 	var err error
+	trackers = limitTrackers(utils.StableUniq(trackers), maxMagnetTrackers)
 	additionalTrackers := limitTrackers(getAdditionalTrackers(ctx, r), maxAdditionalTrackers)
 	allTrackers := make([]string, 0, len(trackers)+len(additionalTrackers))
 	allTrackers = append(allTrackers, trackers...)
