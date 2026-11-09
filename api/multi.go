@@ -423,7 +423,7 @@ func (h *MultiHandler) promoteCachedSecondaries(r *http.Request, jobs []multiJob
 	if h.CacheProbe == nil {
 		return
 	}
-	if _, ok := forward[noCacheParam]; ok || strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") {
+	if freshRequested(r, forward) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), cacheProbeTimeout)

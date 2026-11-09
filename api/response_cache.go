@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -112,14 +113,35 @@ func (rc *ResponseCache) ttlFor(label string) time.Duration {
 // before the handler runs. "Cache-Control: no-cache" does the same.
 const noCacheParam = "nocache"
 
-// wantsFresh reports whether r asked to skip the cached response, and strips
-// the nocache parameter from r so the key and the handler never see it.
-func wantsFresh(r *http.Request) bool {
-	q := r.URL.Query()
+// freshRequested reports whether r (with query q) asks to skip the cached
+// response and may do so. When RESPONSE_CACHE_BYPASS_TOKEN is set, only
+// callers with "Authorization: Bearer <token>" may: otherwise anyone could
+// force a new scrape of the source sites on every request. Unset keeps the
+// old behavior (anyone may), like MANUAL_API_TOKEN.
+func freshRequested(r *http.Request, q url.Values) bool {
 	fresh := strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache")
 	if vals, ok := q[noCacheParam]; ok {
 		v := strings.ToLower(strings.TrimSpace(vals[0]))
 		fresh = fresh || v == "" || v == "1" || v == "true"
+	}
+	if !fresh {
+		return false
+	}
+	token := os.Getenv("RESPONSE_CACHE_BYPASS_TOKEN")
+	if token == "" {
+		return true
+	}
+	got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+}
+
+// wantsFresh reports whether r asked to skip the cached response (and may,
+// see freshRequested), and strips the nocache parameter from r so the key and
+// the handler never see it.
+func wantsFresh(r *http.Request) bool {
+	q := r.URL.Query()
+	fresh := freshRequested(r, q)
+	if _, ok := q[noCacheParam]; ok {
 		q.Del(noCacheParam)
 		r.URL.RawQuery = q.Encode()
 		r.RequestURI = r.URL.RequestURI()
@@ -127,10 +149,33 @@ func wantsFresh(r *http.Request) bool {
 	return fresh
 }
 
+// cacheKeyParams are the query parameters the Wrap'd indexer handlers read
+// (search, paging, post-processing filters and sort). Anything else is
+// dropped from the request before the key is computed, so junk or repeated
+// parameters cannot mint new cache keys (S-03, auditoria 2026-11-09). A
+// handler that starts reading a new parameter must add it here.
+var cacheKeyParams = map[string]bool{
+	"q": true, "page": true, "filter_results": true, "min_similarity": true,
+	"limit": true, "sortBy": true, "sortDirection": true, "audio": true,
+	"year": true, "imdb": true, "quality": true, "season": true, "episode": true,
+}
+
+// canonicalQuery keeps only cacheKeyParams, each with its first value (the
+// one url.Values.Get returns, which is what the handlers use).
+func canonicalQuery(q url.Values) url.Values {
+	out := url.Values{}
+	for k, vs := range q {
+		if cacheKeyParams[k] && len(vs) > 0 {
+			out[k] = vs[:1]
+		}
+	}
+	return out
+}
+
 // responseCacheKey is the key of the cached response of indexer label for the
-// query q (nocache already removed).
+// query q (nocache already removed), after canonicalQuery.
 func responseCacheKey(label string, q url.Values) string {
-	return cache.Key(cache.KindResp, label+":"+q.Encode(), "")
+	return cache.Key(cache.KindResp, label+":"+canonicalQuery(q).Encode(), "")
 }
 
 // Cached reports whether a response of indexer label for the query q is in
@@ -166,7 +211,11 @@ func (rc *ResponseCache) Wrap(label string, next http.HandlerFunc) http.HandlerF
 			return
 		}
 		fresh := wantsFresh(r)
-		key := responseCacheKey(label, r.URL.Query())
+		// the handler sees the same query the key is built from
+		cq := canonicalQuery(r.URL.Query())
+		r.URL.RawQuery = cq.Encode()
+		r.RequestURI = r.URL.RequestURI()
+		key := responseCacheKey(label, cq)
 
 		if fresh {
 			rc.indexer.metrics.CacheMisses.WithLabelValues("indexer_response_bypass").Inc()
