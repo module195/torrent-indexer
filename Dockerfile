@@ -1,6 +1,6 @@
 # Imagens fixadas por digest (o Dependabot atualiza): uma tag pode ser
 # republicada com outro conteúdo.
-FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS builder
+FROM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS builder
 WORKDIR /go/src/app
 
 # Dependências numa camada própria: só voltam a ser baixadas quando go.mod/go.sum mudam.
