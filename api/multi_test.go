@@ -618,8 +618,9 @@ func Test_multiHandlerPromotesCachedSecondary(t *testing.T) {
 	if s := stateOf(p, "torrentfilmeshds"); s != "ok" || p.Count != 3 || p.Partial {
 		t.Fatalf("cached secondary: state=%q count=%d partial=%v", s, p.Count, p.Partial)
 	}
-	// only the secondary is probed, with the sub-call's own query
-	if want := []string{"torrentfilmeshds?q=matrix&sortBy=seeders"}; !slices.Equal(probed, want) {
+	// every call is probed (a cached primary takes no limiter slot), each
+	// with the sub-call's own query
+	if want := []string{"bludv_ru?q=matrix&sortBy=seeders", "rede_torrent?q=matrix&sortBy=seeders", "torrentfilmeshds?q=matrix&sortBy=seeders"}; !slices.Equal(probed, want) {
 		t.Errorf("probed %v, want %v", probed, want)
 	}
 

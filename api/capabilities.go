@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/module195/torrent-indexer/logging"
 	meilisearch "github.com/module195/torrent-indexer/search"
 )
 
@@ -180,7 +181,8 @@ func (s *IndexerStats) Track(name string, next http.HandlerFunc) http.HandlerFun
 		if status == 0 {
 			status = http.StatusOK
 		}
-		switch err := r.Context().Err(); {
+		ctx := r.Context()
+		switch err := ctx.Err(); {
 		case errors.Is(err, context.Canceled):
 			// the client gave up; the run was cut short by it, not by the site
 			return
@@ -190,8 +192,45 @@ func (s *IndexerStats) Track(name string, next http.HandlerFunc) http.HandlerFun
 			// it, is too slow, which is a failure whatever was written
 			status = http.StatusGatewayTimeout
 		}
+		if isFailureStatus(status) && !firstFailureInSearch(ctx, name) {
+			// another query of the same /indexers/multi request already
+			// counted this site's failure: one bad moment of the site is one
+			// failure, however many queries the client sent
+			return
+		}
 		s.record(name, status, time.Since(start))
 	}
+}
+
+// failureGroupKey marks the requests of one /indexers/multi call, so Track
+// counts at most one failure per indexer for it. guindex sends up to 3
+// queries per search: counted one by one, a single 502 took an indexer out.
+type failureGroupKey struct{}
+
+type failureGroup struct {
+	mu     sync.Mutex
+	failed map[string]bool
+}
+
+// withFailureGroup returns ctx carrying a new failure group.
+func withFailureGroup(ctx context.Context) context.Context {
+	return context.WithValue(ctx, failureGroupKey{}, &failureGroup{failed: map[string]bool{}})
+}
+
+// firstFailureInSearch reports whether a failure of name should be recorded:
+// always outside a failure group, only the first one inside it.
+func firstFailureInSearch(ctx context.Context, name string) bool {
+	g, ok := ctx.Value(failureGroupKey{}).(*failureGroup)
+	if !ok {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.failed[name] {
+		return false
+	}
+	g.failed[name] = true
+	return true
 }
 
 func isFailureStatus(status int) bool {
@@ -215,7 +254,21 @@ func (s *IndexerStats) record(name string, status int, d time.Duration) {
 		}
 		st.consecutiveFailures++
 		st.lastFailure = now
+		if st.consecutiveFailures >= unhealthyAfter {
+			logging.Warn().
+				Str("indexer", name).
+				Int("status", status).
+				Int("consecutive_failures", st.consecutiveFailures).
+				Dur("retry_after", retryAfter(st.consecutiveFailures)).
+				Msg("indexer marked unhealthy")
+		}
 		return
+	}
+	if st.consecutiveFailures >= unhealthyAfter {
+		logging.Info().
+			Str("indexer", name).
+			Int("previous_failures", st.consecutiveFailures).
+			Msg("indexer healthy again")
 	}
 	st.consecutiveFailures = 0
 	if status >= 400 {
@@ -319,6 +372,7 @@ type SourcesHandler struct {
 	meiliMu        sync.Mutex
 	meiliHealthy   bool
 	meiliCheckedAt time.Time
+	meiliProbing   chan struct{} // closed when the running probe ends; nil if none
 }
 
 func NewSourcesHandler(stats *IndexerStats, si *meilisearch.SearchIndexer, f Features) *SourcesHandler {
@@ -353,24 +407,49 @@ func (h *SourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// meiliFirstProbeWait is how long /sources?v=2 waits for the very first
+// Meilisearch probe. After that it never waits: a stale value is served and
+// refreshed in the background, so a hanging Meilisearch (the probe waits up
+// to 5 s) can't hold /sources, which guindex reads with a 1.5 s timeout.
+const meiliFirstProbeWait = time.Second
+
 // isMeiliHealthy reports whether Meilisearch is configured and answering,
-// caching the probe for meiliHealthTTL.
+// from a probe at most meiliHealthTTL old (or being refreshed). Concurrent
+// callers share one probe.
 func (h *SourcesHandler) isMeiliHealthy() bool {
 	if h.search == nil || h.search.BaseURL == "" {
 		return false
 	}
 	h.meiliMu.Lock()
-	if time.Since(h.meiliCheckedAt) < meiliHealthTTL {
-		ok := h.meiliHealthy
-		h.meiliMu.Unlock()
-		return ok
+	ok, checked := h.meiliHealthy, !h.meiliCheckedAt.IsZero()
+	fresh := checked && time.Since(h.meiliCheckedAt) < meiliHealthTTL
+	var probing chan struct{}
+	if !fresh {
+		if h.meiliProbing == nil {
+			h.meiliProbing = make(chan struct{})
+			go h.probeMeili(h.meiliProbing)
+		}
+		probing = h.meiliProbing
 	}
 	h.meiliMu.Unlock()
+	if fresh || checked {
+		return ok
+	}
+	select {
+	case <-probing:
+		h.meiliMu.Lock()
+		defer h.meiliMu.Unlock()
+		return h.meiliHealthy
+	case <-time.After(meiliFirstProbeWait):
+		return false
+	}
+}
 
+func (h *SourcesHandler) probeMeili(done chan struct{}) {
 	ok := h.search.IsHealthy()
-
 	h.meiliMu.Lock()
 	h.meiliHealthy, h.meiliCheckedAt = ok, time.Now()
+	h.meiliProbing = nil
 	h.meiliMu.Unlock()
-	return ok
+	close(done)
 }

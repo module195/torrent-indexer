@@ -62,7 +62,9 @@ func skipIMDBQueryMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		q := r.URL.Query().Get("q")
+		// normalized like IndexerCapability.Supports, so " TT1234567" is
+		// treated as the ID it is and not sent to the site as text
+		q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 		if imdbQueryRE.MatchString(q) {
 			w.Header().Set("Content-Type", "application/json")
 			if strings.HasPrefix(r.URL.Path, "/indexers/") {

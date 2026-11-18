@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSearchTorrentRetriesWithLastStrategy(t *testing.T) {
@@ -119,5 +123,41 @@ func TestEnsureSettings(t *testing.T) {
 		!slices.Equal(body["filterableAttributes"], []string{"imdb_id"}) ||
 		!slices.Equal(body["sortableAttributes"], []string{"date_ts", "seed_count"}) {
 		t.Errorf("sent %s %s %v", method, path, body)
+	}
+}
+
+// Without the index settings the imdb_id filter fails; the search still
+// answers (text search) and the settings are applied again, once.
+func TestSearchTorrentByIMDBReappliesSettingsWhenFilterFails(t *testing.T) {
+	var patches atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patches.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), `"filter"`) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":"invalid_search_filter"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"hits":[{"title":"Old","info_hash":"aa"}]}`)
+	}))
+	defer srv.Close()
+	si := NewSearchIndexer(srv.URL, "", "torrents")
+	for range 2 {
+		got, err := si.SearchTorrentByIMDB(context.Background(), "tt1234567", 10)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("got %v, %v", got, err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for patches.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := patches.Load(); n != 1 {
+		t.Fatalf("settings applied %d times, want 1", n)
 	}
 }
