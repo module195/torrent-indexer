@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,7 +30,8 @@ func TestTorrentFilmesHDsLinkPHPFanoutIsBounded(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 			inFlight.Add(-1)
-			fmt.Fprintf(w, `<html><body><a href="magnet:?xt=urn:btih:%040s&dn=ep">m</a></body></html>`, r.URL.Query().Get("id"))
+			id, _ := strconv.Atoi(r.URL.Query().Get("id"))
+			fmt.Fprintf(w, `<html><body><a href="magnet:?xt=urn:btih:%040d&dn=ep">m</a></body></html>`, id)
 			return
 		}
 		var b strings.Builder
@@ -43,19 +45,29 @@ func TestTorrentFilmesHDsLinkPHPFanoutIsBounded(t *testing.T) {
 	defer site.Close()
 	i := newTfhdsTestIndexer(t, site)
 
+	// collect and resolve only: the rest of getTorrentsTorrentFilmesHDs
+	// scrapes trackers, which fetches the public tracker list from the
+	// network and leaves it in process-wide state other tests read
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	torrents, err := getTorrentsTorrentFilmesHDs(ctx, i, site.URL+"/serie-1a-temporada")
+	doc, err := getDocument(ctx, i, site.URL+"/serie-1a-temporada", torrentFilmesHDs.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := hits.Load(); got > tfhdsMaxLinkPHP {
-		t.Errorf("link.php fetched %d times, want at most %d", got, tfhdsMaxLinkPHP)
+	urls, labels := collectLinkPHP(doc, site.URL)
+	if len(urls) != tfhdsMaxLinkPHP || len(labels) != len(urls) {
+		t.Fatalf("collected %d urls / %d labels, want %d", len(urls), len(labels), tfhdsMaxLinkPHP)
+	}
+	resolved := resolveLinkPHPs(ctx, i, urls)
+	if got := hits.Load(); got != tfhdsMaxLinkPHP {
+		t.Errorf("link.php fetched %d times, want %d (one per distinct anchor followed)", got, tfhdsMaxLinkPHP)
 	}
 	if got := peak.Load(); got > tfhdsLinkPHPConcurrency {
 		t.Errorf("peak concurrent link.php fetches = %d, want at most %d", got, tfhdsLinkPHPConcurrency)
 	}
-	if len(torrents) != tfhdsMaxLinkPHP {
-		t.Errorf("got %d torrents, want %d (one per distinct anchor followed)", len(torrents), tfhdsMaxLinkPHP)
+	for k, mag := range resolved {
+		if want := fmt.Sprintf("%040d", k+1); !strings.Contains(mag, want) {
+			t.Errorf("resolved[%d] = %q, want the magnet of id %d (page order)", k, mag, k+1)
+		}
 	}
 }

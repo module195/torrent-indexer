@@ -421,27 +421,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	size = utils.StableUniq(size)
 
 	// Collect magnets from link.php pages (paralelo)
-	var linkPHPURLs, linkPHPLabels []string
-	seenLinkPHP := map[string]bool{}
-	baseURL := strings.TrimRight(torrentFilmesHDs.URL, "/")
-	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists || href == "" {
-			return
-		}
-		fullURL := href
-		if strings.HasPrefix(href, "/") {
-			fullURL = baseURL + href
-		}
-		// the same anchor repeated resolves to the same magnet, which is
-		// deduplicated below anyway (the first label is the one kept)
-		if seenLinkPHP[fullURL] || len(linkPHPURLs) >= tfhdsMaxLinkPHP {
-			return
-		}
-		seenLinkPHP[fullURL] = true
-		linkPHPURLs = append(linkPHPURLs, fullURL)
-		linkPHPLabels = append(linkPHPLabels, s.Text())
-	})
+	linkPHPURLs, linkPHPLabels := collectLinkPHP(doc, strings.TrimRight(torrentFilmesHDs.URL, "/"))
 
 	// rótulo do botão de cada magnet ("S01.1080p | MKV | Ep.01/05 | Dual Áudio")
 	labels := map[string]string{}
@@ -454,19 +434,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	// resolvidos em paralelo, mas na ordem da página (o tamanho é casado por posição)
 	var magnetLinks []string
 	if len(linkPHPURLs) > 0 {
-		resolved := make([]string, len(linkPHPURLs))
-		sem := make(chan struct{}, tfhdsLinkPHPConcurrency)
-		var wg sync.WaitGroup
-		for idx, u := range linkPHPURLs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				resolved[idx] = resolveLinkPHP(ctx, i, u)
-			}()
-		}
-		wg.Wait()
+		resolved := resolveLinkPHPs(ctx, i, linkPHPURLs)
 		for idx, mag := range resolved {
 			if mag != "" {
 				magnetLinks = append(magnetLinks, mag)
@@ -795,6 +763,50 @@ var reTranslatedAnnounce = regexp.MustCompile(`(?i)(/|%2F)anunciar(&|$)`)
 // reMangledTracker casa um tr= sem pontuação: protocolo, host (termina em letra),
 // porta e "announce" colados.
 var reMangledTracker = regexp.MustCompile(`(?i)([?&]tr=)(udp|https?)([a-z0-9][a-z0-9.-]*\.[a-z]{2,})(\d{2,5})announce\b`)
+
+// collectLinkPHP returns the distinct link.php hrefs of a detail page (at most
+// tfhdsMaxLinkPHP, in page order) and the label of each one's first anchor.
+// A repeated anchor resolves to the same magnet, which would be deduplicated
+// later anyway.
+func collectLinkPHP(doc *goquery.Document, baseURL string) (urls, labels []string) {
+	seen := map[string]bool{}
+	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists || href == "" {
+			return
+		}
+		fullURL := href
+		if strings.HasPrefix(href, "/") {
+			fullURL = baseURL + href
+		}
+		if seen[fullURL] || len(urls) >= tfhdsMaxLinkPHP {
+			return
+		}
+		seen[fullURL] = true
+		urls = append(urls, fullURL)
+		labels = append(labels, s.Text())
+	})
+	return urls, labels
+}
+
+// resolveLinkPHPs resolves the link.php pages, at most tfhdsLinkPHPConcurrency
+// at a time, keeping page order (the size is matched by position).
+func resolveLinkPHPs(ctx context.Context, i *Indexer, urls []string) []string {
+	resolved := make([]string, len(urls))
+	sem := make(chan struct{}, tfhdsLinkPHPConcurrency)
+	var wg sync.WaitGroup
+	for idx, u := range urls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			resolved[idx] = resolveLinkPHP(ctx, i, u)
+		}()
+	}
+	wg.Wait()
+	return resolved
+}
 
 func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 	doc, err := getDocument(ctx, i, linkURL, torrentFilmesHDs.URL)
