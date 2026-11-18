@@ -263,9 +263,8 @@ func main() {
 	indexerMux.HandleFunc("/indexers/manual", handler.WithXCacheBypass(indexers.HandlerManualIndexer))
 	multi := handler.NewMultiHandler(indexerRoutes)
 	multi.WarmCache = respCache != nil
-	if respCache != nil {
-		multi.CacheProbe = respCache.Cached
-	}
+	// torrentfilmeshds has its own result cache, on even without respCache
+	multi.CacheProbe = handler.MultiCacheProbe(respCache, indexers)
 	multi.Stats = stats
 	indexerMux.Handle("/indexers/multi", multi)
 	indexerMux.Handle("/sources", handler.NewSourcesHandler(stats, searchIndex, handler.Features{

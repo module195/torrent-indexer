@@ -45,6 +45,27 @@ var imdbQueryRegex = regexp.MustCompile(`^tt\d{7,8}$`)
 func isIMDBQuery(q string) bool {
 	return imdbQueryRegex.MatchString(strings.TrimSpace(q))
 }
+
+// tfhdsResultKey is the Redis key of the raw result of q on page ("" is "1").
+func tfhdsResultKey(q, page string) string {
+	if page == "" {
+		page = "1"
+	}
+	return fmt.Sprintf("tfhds:raw:%s:%s", q, page)
+}
+
+// TorrentFilmesHDsCached reports whether the handler would answer query from
+// its own result cache, without scraping. This route has no respCache.Wrap, so
+// ResponseCache.Cached never finds it; /indexers/multi asks here instead.
+func (i *Indexer) TorrentFilmesHDsCached(ctx context.Context, query url.Values) bool {
+	q := query.Get("q")
+	if q == "" || isIMDBQuery(q) || i.redis == nil {
+		return false
+	}
+	ok, err := i.redis.Exists(ctx, tfhdsResultKey(q, pageValue(query.Get("page"))))
+	return err == nil && ok
+}
+
 func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	defer func() {
@@ -71,7 +92,7 @@ func (i *Indexer) HandlerTorrentFilmesHDsIndexer(w http.ResponseWriter, r *http.
 	// Chave de cache/singleflight: query + página.
 	// O cache guarda o resultado BRUTO (antes dos post-processors), pois os
 	// post-processors dependem de parâmetros do request que não estão na chave.
-	cacheKey := fmt.Sprintf("tfhds:raw:%s:%s", q, page)
+	cacheKey := tfhdsResultKey(q, page)
 
 	cacheStatus := "MISS"
 	// fetchedHere: this request ran the scrape (not a cache hit nor a

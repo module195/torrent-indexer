@@ -11,7 +11,11 @@ const maxPageDigits = 6
 // the handler answer 500 and the indexer count a health failure: three of
 // those from any anonymous client marked a primary indexer unhealthy.
 func pageParam(r *http.Request) string {
-	page := r.URL.Query().Get("page")
+	return pageValue(r.URL.Query().Get("page"))
+}
+
+// pageValue is pageParam for a raw "page" value.
+func pageValue(page string) string {
 	if page == "" || len(page) > maxPageDigits {
 		return ""
 	}
