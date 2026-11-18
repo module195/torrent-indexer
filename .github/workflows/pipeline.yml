@@ -17,7 +17,11 @@ jobs:
   go-lint:
     name: Lint Go code
     runs-on: ubuntu-latest
-    container: golang:1.27
+    # O golangci-lint v2.13.2 foi compilado com um Go anterior ao 1.27 e não
+    # lê os pacotes da biblioteca padrão do 1.27 (export data v5). O lint fica
+    # no 1.25 até subir o golangci-lint; os testes rodam no 1.27, como o
+    # Dockerfile.
+    container: golang:1.25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
