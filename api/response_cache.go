@@ -190,6 +190,18 @@ func (rc *ResponseCache) Cached(ctx context.Context, label string, q url.Values)
 	return err == nil && ok
 }
 
+// MultiCacheProbe is the CacheProbe of /indexers/multi. torrentfilmeshds
+// keeps its own result cache (its route has no Wrap), so it is asked directly;
+// the other indexers go through rc, which may be nil (response cache off).
+func MultiCacheProbe(rc *ResponseCache, i *Indexer) func(ctx context.Context, indexer string, q url.Values) bool {
+	return func(ctx context.Context, indexer string, q url.Values) bool {
+		if indexer == "torrentfilmeshds" {
+			return i.TorrentFilmesHDsCached(ctx, q)
+		}
+		return rc.Cached(ctx, indexer, q)
+	}
+}
+
 // Wrap returns next with response caching/coalescing for the given indexer.
 // A nil receiver (feature disabled), or a per-indexer TTL of 0, only adds
 // "X-Cache: BYPASS"; the body is whatever next writes.
