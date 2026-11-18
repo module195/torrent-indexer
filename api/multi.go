@@ -108,14 +108,13 @@ type MultiHandler struct {
 	// it every primary counts as healthy.
 	Stats *IndexerStats
 	// CacheProbe, when set, says whether a call already has a cached
-	// response. A secondary that does joins the foreground: it answers in
-	// milliseconds, and as background it was dropped whenever the primaries
-	// finished first.
+	// response. Such a call takes no limiter slot, and a secondary that has
+	// one joins the foreground (see markCachedJobs).
 	CacheProbe func(ctx context.Context, indexer string, query url.Values) bool
 }
 
-// cacheProbeTimeout bounds the cache lookups for the secondaries; past it
-// they stay in the background as before.
+// cacheProbeTimeout bounds the cache lookups of a request; the jobs not
+// looked up by then run as if not cached.
 const cacheProbeTimeout = 50 * time.Millisecond
 
 // NewMultiHandler takes the /indexers/<name> handlers keyed by indexer name.
@@ -159,6 +158,9 @@ type multiJob struct {
 	route http.HandlerFunc
 	// background: a secondary-tier call the response doesn't wait for
 	background bool
+	// cached: the response cache already has its answer, so it runs without
+	// taking a slot of the limiter (a replay costs no site or solver time)
+	cached bool
 }
 
 type multiResult struct {
@@ -224,7 +226,7 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.promoteCachedSecondaries(r, jobs, forward)
+	h.markCachedJobs(r, jobs, forward)
 
 	// The response waits for the foreground calls only; with none (say,
 	// indexers=torrentfilmeshds) the secondaries are the foreground.
@@ -246,7 +248,9 @@ func (h *MultiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Sub-calls must not touch r once this handler returns, so they all
 	// derive from a detached copy made up front.
-	base := r.Clone(context.WithoutCancel(r.Context()))
+	// It also carries the failure group: the queries of this request count
+	// at most one failure per indexer in the source health.
+	base := r.Clone(withFailureGroup(context.WithoutCancel(r.Context())))
 
 	// The jobs start in order (every indexer for q[0], then q[1], ...), so the
 	// ones left waiting at the deadline are the last queries. A job whose
@@ -355,6 +359,15 @@ func (h *MultiHandler) dispatch(deadlineCtx context.Context, base *http.Request,
 		kept := pending[:0]
 		for _, i := range pending {
 			j := jobs[i]
+			if j.cached {
+				// a cache replay: no slot, so late runs of this site (holding
+				// its slots for up to multiCallTimeout) can't keep it out. If
+				// the entry expires between the probe and the run, this one
+				// run goes past the limiter.
+				running[i].Store(true)
+				go func() { done <- runMultiCall(base, j, forward) }()
+				continue
+			}
 			if inRequest.Load() >= multiConcurrency || !h.limiter.tryAcquire(j.name) {
 				kept = append(kept, i)
 				continue
@@ -416,10 +429,12 @@ func (h *MultiHandler) primaryCovers(primary string, names []string, q string) b
 	return h.Stats.Healthy(primary)
 }
 
-// promoteCachedSecondaries moves to the foreground the secondary jobs whose
-// response is already cached. Skipped when the request asked for a fresh run
+// markCachedJobs marks the jobs whose response is already cached. They run
+// without a limiter slot, and a cached secondary moves to the foreground: it
+// answers in milliseconds, and as background it was dropped whenever the
+// primaries finished first. Skipped when the request asked for a fresh run
 // (the cache would not be read).
-func (h *MultiHandler) promoteCachedSecondaries(r *http.Request, jobs []multiJob, forward url.Values) {
+func (h *MultiHandler) markCachedJobs(r *http.Request, jobs []multiJob, forward url.Values) {
 	if h.CacheProbe == nil {
 		return
 	}
@@ -429,13 +444,11 @@ func (h *MultiHandler) promoteCachedSecondaries(r *http.Request, jobs []multiJob
 	ctx, cancel := context.WithTimeout(r.Context(), cacheProbeTimeout)
 	defer cancel()
 	for i := range jobs {
-		if !jobs[i].background {
-			continue
-		}
 		if ctx.Err() != nil {
 			return
 		}
 		if h.CacheProbe(ctx, jobs[i].name, multiSubQuery(forward, jobs[i].q)) {
+			jobs[i].cached = true
 			jobs[i].background = false
 		}
 	}

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -77,6 +78,7 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	if id := strings.ToLower(query); reIMDbID.MatchString(id) {
 		results, err := h.Module.SearchTorrentByIMDB(ctx, id, meilisearch.MaxSearchHits)
 		if err != nil {
+			logSearchError(ctx, err, id)
 			http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 			return
 		}
@@ -88,6 +90,7 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 	// Try original query
 	results, err := h.Module.SearchTorrent(ctx, query, limit)
 	if err != nil {
+		logSearchError(ctx, err, query)
 		http.Error(w, "Failed to search torrents", http.StatusInternalServerError)
 		return
 	}
@@ -117,6 +120,16 @@ func (h *MeilisearchHandler) SearchTorrentHandler(w http.ResponseWriter, r *http
 }
 
 // withQuery returns a copy of r whose q is query.
+// logSearchError logs a failed Meilisearch search, unless the client gave up
+// (guindex cuts /search at its own timeout): that one says nothing about
+// Meilisearch.
+func logSearchError(ctx context.Context, err error, q string) {
+	if ctx.Err() != nil {
+		return
+	}
+	logging.Error().Err(err).Str("q", q).Msg("Meilisearch search failed")
+}
+
 func withQuery(r *http.Request, query string) *http.Request {
 	clone := r.Clone(r.Context())
 	q := clone.URL.Query()

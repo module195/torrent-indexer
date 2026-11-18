@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/module195/torrent-indexer/logging"
 	"github.com/module195/torrent-indexer/schema"
 )
 
@@ -20,7 +21,17 @@ type SearchIndexer struct {
 	BaseURL   string
 	APIKey    string
 	IndexName string
+
+	// settingsMu guards settingsTriedAt, the last time a failed imdb_id
+	// filter made SearchTorrentByIMDB apply the index settings again.
+	settingsMu      sync.Mutex
+	settingsTriedAt time.Time
 }
+
+// settingsRetryInterval bounds how often a failing imdb_id filter re-applies
+// the index settings (EnsureSettings gives up at start after 10 attempts, so
+// a Meilisearch that came up later would otherwise never get them).
+const settingsRetryInterval = 5 * time.Minute
 
 // IndexStats represents statistics about the Meilisearch index
 type IndexStats struct {
@@ -246,6 +257,12 @@ func (t *SearchIndexer) SearchTorrentByIMDB(ctx context.Context, imdbID string, 
 	if newestErr != nil && legacyE != nil {
 		return nil, legacyE
 	}
+	if newestErr != nil && ctx.Err() == nil {
+		// the old text search alone lists ties oldest first, so a long series
+		// loses its newest episodes: say so, and get the settings back
+		logging.Warn().Err(newestErr).Str("imdb", imdbID).Msg("Meilisearch imdb_id filter failed; answering with the text search only")
+		t.reapplySettingsSoon()
+	}
 	// newest first; the text search fills in what has no imdb_id yet
 	seen := make(map[string]bool, len(newest))
 	out := make([]schema.IndexedTorrent, 0, len(newest)+len(legacy))
@@ -258,6 +275,27 @@ func (t *SearchIndexer) SearchTorrentByIMDB(ctx context.Context, imdbID string, 
 		}
 	}
 	return out, nil
+}
+
+// reapplySettingsSoon runs EnsureSettings in the background, at most once per
+// settingsRetryInterval.
+func (t *SearchIndexer) reapplySettingsSoon() {
+	t.settingsMu.Lock()
+	if !t.settingsTriedAt.IsZero() && time.Since(t.settingsTriedAt) < settingsRetryInterval {
+		t.settingsMu.Unlock()
+		return
+	}
+	t.settingsTriedAt = time.Now()
+	t.settingsMu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := t.EnsureSettings(ctx); err != nil {
+			logging.Warn().Err(err).Msg("Failed to re-apply Meilisearch index settings")
+			return
+		}
+		logging.Info().Msg("Meilisearch index settings re-applied")
+	}()
 }
 
 // searchIMDBText is the old IMDb search: the ID as a phrase in the imdb link,

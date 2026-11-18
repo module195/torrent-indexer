@@ -19,6 +19,9 @@ import (
 const (
 	betorDumpLockKey   = "betor-dump:lock"
 	betorDumpBatchSize = 2000
+	// betorDumpMaxBody caps the downloaded dump. It is far above the
+	// catalog's size, and only there so a wrong URL can't fill the memory.
+	betorDumpMaxBody = 1 << 30
 	// betorDumpCommonShare is the share of an IMDb ID's torrent names a word
 	// must appear in to count as part of that title.
 	betorDumpCommonShare = 0.2
@@ -53,49 +56,89 @@ type BetorDumpSync struct {
 	Search   *meilisearch.SearchIndexer
 	Redis    *cache.Redis
 	Client   *http.Client
+	// RetryDelays overrides betorDumpRetryDelays (tests).
+	RetryDelays []time.Duration
 }
 
+// betorDumpRetryDelays are the waits before retrying a failed sync, one per
+// attempt; once they run out, the next try is the regular interval.
+var betorDumpRetryDelays = []time.Duration{time.Minute, 2 * time.Minute, 5 * time.Minute}
+
 // Start runs one sync right away and then one per interval, until ctx ends.
+// A failed sync is retried after betorDumpRetryDelays (at start Meilisearch
+// may still be coming up) instead of waiting for the next interval.
 func (s *BetorDumpSync) Start(ctx context.Context) {
+	delays := s.RetryDelays
+	if delays == nil {
+		delays = betorDumpRetryDelays
+	}
 	go func() {
-		s.runLocked(ctx)
 		ticker := time.NewTicker(s.Interval)
 		defer ticker.Stop()
+		var retry <-chan time.Time
+		attempt := 0
+		run := func() {
+			if s.runLocked(ctx) {
+				attempt, retry = 0, nil
+				return
+			}
+			if attempt < len(delays) {
+				d := delays[attempt]
+				attempt++
+				logging.Info().Dur("in", d).Int("attempt", attempt).Msg("Betor dump sync will retry")
+				retry = time.After(d)
+				return
+			}
+			attempt, retry = 0, nil
+		}
+		run()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.runLocked(ctx)
+				run()
+			case <-retry:
+				run()
 			}
 		}
 	}()
 }
 
 // runLocked runs a sync unless another replica holds the lock. Without Redis
-// (or with Redis down) it runs anyway: a duplicate upsert is harmless.
-func (s *BetorDumpSync) runLocked(ctx context.Context) {
+// (or with Redis down) it runs anyway: a duplicate upsert is harmless. It
+// reports false only when this run failed; the lock is then released, so a
+// retry (or a restart) is not skipped for the lock's whole TTL.
+func (s *BetorDumpSync) runLocked(ctx context.Context) (ok bool) {
 	// runs in the background sync goroutine: a panic on dump data must cost
 	// this sync, not the process
 	defer utils.RecoverAsError(nil, "betor dump sync")
+	locked := false
 	if s.Redis != nil {
 		ttl := s.Interval / 2
 		if ttl < 10*time.Minute {
 			ttl = 10 * time.Minute
 		}
-		ok, err := s.Redis.SetNX(ctx, betorDumpLockKey, []byte(time.Now().Format(time.RFC3339)), ttl)
-		if err == nil && !ok {
+		got, err := s.Redis.SetNX(ctx, betorDumpLockKey, []byte(time.Now().Format(time.RFC3339)), ttl)
+		if err == nil && !got {
 			logging.Info().Msg("Betor dump sync skipped: another replica ran it recently")
-			return
+			return true
 		}
+		locked = err == nil
 	}
 	start := time.Now()
 	n, err := s.Run(ctx)
 	if err != nil {
 		logging.Error().Err(err).Int("documents", n).Msg("Betor dump sync failed")
-		return
+		if locked {
+			if derr := s.Redis.Del(context.WithoutCancel(ctx), betorDumpLockKey); derr != nil {
+				logging.Warn().Err(derr).Msg("Failed to release the betor dump lock")
+			}
+		}
+		return false
 	}
 	logging.Info().Int("documents", n).Dur("took", time.Since(start)).Msg("Betor dump sync done")
+	return true
 }
 
 // Run downloads the dump, converts it and upserts it in batches. It returns
@@ -135,7 +178,9 @@ func (s *BetorDumpSync) fetch(ctx context.Context) ([]betorDumpItem, error) {
 		return nil, fmt.Errorf("download dump: status %d", resp.StatusCode)
 	}
 	var items []betorDumpItem
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+	// external response: bounded like every other one (security audit 28/10)
+	body := http.MaxBytesReader(nil, resp.Body, betorDumpMaxBody)
+	if err := json.NewDecoder(body).Decode(&items); err != nil {
 		return nil, fmt.Errorf("decode dump: %w", err)
 	}
 	return items, nil
