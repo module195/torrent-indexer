@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"regexp"
@@ -44,6 +45,35 @@ func indexerSupportsIMDb(path string) bool {
 		}
 	}
 	return false
+}
+
+// maxQueryBytes caps each q value. Real titles are far shorter; without a cap
+// a q near the 1 MiB request-line limit was scored against every result by
+// the Jaccard similarity check, on /search, /indexers/<name> and
+// /indexers/multi (security audit 18/11).
+const maxQueryBytes = 512
+
+// maxHeaderBytes caps the request line plus headers (net/http's default is
+// 1 MiB). It leaves room for /indexers/multi with every indexer and
+// multiMaxQueries values of q at maxQueryBytes.
+const maxHeaderBytes = 64 << 10
+
+// limitQueryMiddleware answers 400 to a request whose q is longer than
+// maxQueryBytes, before any handler or post-processor sees it.
+func limitQueryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, q := range r.URL.Query()["q"] {
+			if len(q) > maxQueryBytes {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": fmt.Sprintf("q longer than %d bytes", maxQueryBytes),
+				})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // skipIMDBQueryMiddleware returns empty results for IMDB ID queries.
@@ -88,6 +118,7 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
 		IdleTimeout:       120 * time.Second,
 	}
 }
@@ -280,6 +311,7 @@ func main() {
 	indexerMux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(public.UIFiles))))
 	loggedIndexerMux := logging.HTTPLoggingMiddleware(indexerMux)
 	loggedIndexerMux = skipIMDBQueryMiddleware(loggedIndexerMux)
+	loggedIndexerMux = limitQueryMiddleware(loggedIndexerMux)
 
 	metricsMux.Handle("/metrics", promhttp.Handler())
 

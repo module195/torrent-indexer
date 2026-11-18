@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const challengePage = "<html><body>Just a moment...</body></html>"
+const challengePage = "<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>"
 
 // cfSite answers like a Cloudflare-protected site: a challenge unless the
 // request carries cf_clearance=ok with the solver's user agent.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -21,7 +22,12 @@ const (
 	betorDumpBatchSize = 2000
 	// betorDumpMaxBody caps the downloaded dump. It is far above the
 	// catalog's size, and only there so a wrong URL can't fill the memory.
-	betorDumpMaxBody = 1 << 30
+	betorDumpMaxBody = 512 << 20
+	// betorDumpMaxItems caps the decoded entries. The byte cap alone did not
+	// bound memory: each tiny entry became a ~120-byte struct, so a 16 MiB
+	// dump of "{}" killed the process with a fatal out-of-memory error
+	// (security audit 18/11). Over the cap the sync fails, not the process.
+	betorDumpMaxItems = 2_000_000
 	// betorDumpCommonShare is the share of an IMDb ID's torrent names a word
 	// must appear in to count as part of that title.
 	betorDumpCommonShare = 0.2
@@ -177,10 +183,39 @@ func (s *BetorDumpSync) fetch(ctx context.Context) ([]betorDumpItem, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download dump: status %d", resp.StatusCode)
 	}
-	var items []betorDumpItem
 	// external response: bounded like every other one (security audit 28/10)
 	body := http.MaxBytesReader(nil, resp.Body, betorDumpMaxBody)
-	if err := json.NewDecoder(body).Decode(&items); err != nil {
+	return decodeBetorDump(body, betorDumpMaxItems)
+}
+
+// decodeBetorDump streams the dump's JSON array one entry at a time. Entries
+// with no magnet are dropped (betorDumpTorrent would skip them anyway), and
+// more than maxItems useful entries fails the decode instead of growing the
+// slice without bound.
+func decodeBetorDump(r io.Reader, maxItems int) ([]betorDumpItem, error) {
+	dec := json.NewDecoder(r)
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decode dump: %w", err)
+	}
+	if tok != json.Delim('[') {
+		return nil, fmt.Errorf("decode dump: expected a JSON array")
+	}
+	var items []betorDumpItem
+	for dec.More() {
+		var it betorDumpItem
+		if err := dec.Decode(&it); err != nil {
+			return nil, fmt.Errorf("decode dump: %w", err)
+		}
+		if it.MagnetURI == "" && it.MagnetXT == "" {
+			continue
+		}
+		if len(items) >= maxItems {
+			return nil, fmt.Errorf("decode dump: more than %d items", maxItems)
+		}
+		items = append(items, it)
+	}
+	if _, err := dec.Token(); err != nil {
 		return nil, fmt.Errorf("decode dump: %w", err)
 	}
 	return items, nil
