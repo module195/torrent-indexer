@@ -23,8 +23,8 @@ import (
 // CleanupTitleWebsites removes unwanted characters from the title
 func CleanupTitleWebsites(_ *Indexer, _ *http.Request, torrents []schema.IndexedTorrent) []schema.IndexedTorrent {
 	for i := range torrents {
-		torrents[i].Title = splitGluedRelease(utils.RemoveKnownWebsites(html.UnescapeString(torrents[i].Title)))
-		torrents[i].OriginalTitle = html.UnescapeString(torrents[i].OriginalTitle)
+		torrents[i].Title = utils.TruncateRunes(splitGluedRelease(utils.RemoveKnownWebsites(html.UnescapeString(torrents[i].Title))), utils.MaxTitleRunes)
+		torrents[i].OriginalTitle = utils.TruncateRunes(html.UnescapeString(torrents[i].OriginalTitle), utils.MaxTitleRunes)
 	}
 	return torrents
 }

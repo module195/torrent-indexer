@@ -8,7 +8,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/module195/torrent-indexer/cache"
 )
 
 // solverAnswering is a FlareSolverr that answers request.get with reply and
@@ -48,7 +52,7 @@ func TestFlareSolverrRetrySendsCookies(t *testing.T) {
 		c, err := r.Cookie("cf_clearance")
 		if err != nil || c.Value != "ok" {
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte("<html><body>Just a moment...</body></html>"))
+			_, _ = w.Write([]byte("<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>"))
 			return
 		}
 		_, _ = w.Write([]byte("<html><body><div class=\"post\">pagina</div></body></html>"))
@@ -60,6 +64,9 @@ func TestFlareSolverrRetrySendsCookies(t *testing.T) {
 		return fmt.Sprintf(`{"status":"ok","solution":{"status":200,"response":"","userAgent":"UA","cookies":[{"domain":%q,"name":"cf_clearance","value":"ok","path":"/"}]}}`, host)
 	})
 	f := NewFlareSolverr(solver.URL, 5000, 1)
+	t.Setenv("REDIS_HOST", "127.0.0.1")
+	t.Setenv("REQUESTER_ALLOW_PRIVATE_HOSTS", "true") // the fixture site is on loopback
+	NewRequester(f, cache.NewRedis(), 5*time.Second)
 	body, err := f.Get(t.Context(), site.URL+"/busca", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +74,37 @@ func TestFlareSolverrRetrySendsCookies(t *testing.T) {
 	page, _ := io.ReadAll(body)
 	if !strings.Contains(string(page), "pagina") {
 		t.Fatalf("retry did not carry the cookie: %s", page)
+	}
+}
+
+// The re-fetch with the solver's cookies runs in this process, so it goes
+// through the requester's destination checks: a site that resolves (or
+// redirects) into the internal network is refused, as with the plain client.
+func TestFlareSolverrRefetchIsGuarded(t *testing.T) {
+	var hits atomic.Int32
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("<html><body>interno</body></html>"))
+	}))
+	defer site.Close()
+	solver := solverAnswering(t, emptyList, func(string) string {
+		return `{"status":"ok","solution":{"status":200,"response":"<?xml version=\"1.0\"?><x/>","userAgent":"UA","cookies":[{"domain":"127.0.0.1","name":"c","value":"v","path":"/"}]}}`
+	})
+
+	f := NewFlareSolverr(solver.URL, 5000, 1)
+	if _, err := f.Get(t.Context(), site.URL+"/", 0); err == nil {
+		t.Fatal("re-fetch without the requester's transport must fail")
+	}
+
+	t.Setenv("REDIS_HOST", "127.0.0.1")
+	t.Setenv("REQUESTER_ALLOW_PRIVATE_HOSTS", "")
+	NewRequester(f, cache.NewRedis(), 5*time.Second)
+	_, err := f.Get(t.Context(), site.URL+"/", 0)
+	if !errors.Is(err, ErrBlockedDestination) {
+		t.Fatalf("want ErrBlockedDestination, got %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("internal site was reached %d times", hits.Load())
 	}
 }
 

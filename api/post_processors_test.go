@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/module195/torrent-indexer/schema"
+	"github.com/module195/torrent-indexer/utils"
 )
 
 func Test_torrentComparatorSeedTieBreak(t *testing.T) {
@@ -368,6 +370,31 @@ func Test_CleanupTitleWebsitesUnescapesHTML(t *testing.T) {
 	got := CleanupTitleWebsites(nil, nil, torrents)
 	if got[0].Title != "Capitão América (2011)" || got[0].OriginalTitle != "Capitão América" {
 		t.Errorf("got %q / %q", got[0].Title, got[0].OriginalTitle)
+	}
+}
+
+// A scraped title (a magnet dn) with a long run of U+FEFF used to keep it:
+// strings.Fields does not split on it, but guindex's JavaScript \s does, and
+// its quadratic regexes stalled on it. The title is also capped.
+func Test_CleanupTitleWebsitesZeroWidthAndLength(t *testing.T) {
+	long := strings.Repeat("a", 2*utils.MaxTitleRunes)
+	torrents := []schema.IndexedTorrent{
+		{Title: "Movie.2020.1080p" + strings.Repeat("\ufeff", 200000) + "x"},
+		{Title: "Filme\u200b\u200bDublado"},
+		{Title: long, OriginalTitle: strings.Repeat("ã", 2*utils.MaxTitleRunes)},
+	}
+	got := CleanupTitleWebsites(nil, nil, torrents)
+	if got[0].Title != "Movie.2020.1080p x" {
+		t.Errorf("U+FEFF run kept: %d bytes", len(got[0].Title))
+	}
+	if got[1].Title != "Filme Dublado" {
+		t.Errorf("got %q", got[1].Title)
+	}
+	if n := utf8.RuneCountInString(got[2].Title); n != utils.MaxTitleRunes {
+		t.Errorf("title has %d runes, want %d", n, utils.MaxTitleRunes)
+	}
+	if n := utf8.RuneCountInString(got[2].OriginalTitle); n != utils.MaxTitleRunes || !utf8.ValidString(got[2].OriginalTitle) {
+		t.Errorf("original title has %d runes (valid=%v)", n, utf8.ValidString(got[2].OriginalTitle))
 	}
 }
 

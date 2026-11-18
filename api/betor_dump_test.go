@@ -139,3 +139,29 @@ func Test_compactTorrentDocumentIMDbIDAndDate(t *testing.T) {
 		t.Errorf("empty fields must stay out: %v", doc)
 	}
 }
+
+// The dump is decoded one entry at a time: entries with no magnet are not
+// kept, and more useful entries than the cap fail the sync instead of the
+// process. A 16 MiB dump of "{}" used to end in a fatal out-of-memory error
+// (security audit 18/11).
+func TestDecodeBetorDumpBounded(t *testing.T) {
+	empties := "[" + strings.Repeat("{},", 1_000_000) + `{"magnet_xt":"urn:btih:8AE99C15F568CBB58714F94008F397B78A218E5A"}]`
+	items, err := decodeBetorDump(strings.NewReader(empties), 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("decode = %d items, %v; want 1 item", len(items), err)
+	}
+
+	many := "[" + strings.Repeat(`{"magnet_xt":"x"},`, 10) + `{"magnet_xt":"x"}]`
+	if _, err := decodeBetorDump(strings.NewReader(many), 10); err == nil {
+		t.Fatal("11 items over a cap of 10 must fail")
+	}
+	if items, err := decodeBetorDump(strings.NewReader(many), 11); err != nil || len(items) != 11 {
+		t.Fatalf("decode = %d items, %v; want 11", len(items), err)
+	}
+
+	for _, bad := range []string{`{"magnet_xt":"x"}`, `[{"magnet_xt":"x"}`, ``} {
+		if _, err := decodeBetorDump(strings.NewReader(bad), 10); err == nil {
+			t.Errorf("decode(%q) must fail", bad)
+		}
+	}
+}

@@ -97,6 +97,33 @@ func RemoveKnownWebsites(title string) string {
 		title = re.ReplaceAllString(title, "")
 	}
 	title = reAdPhrases.ReplaceAllString(title, "")
+	// strings.Fields does not split on zero-width format characters, which
+	// JavaScript's \s (guindex) does match: a run of U+FEFF in a magnet dn
+	// survived here and hit quadratic regexes there (security audit 18/11)
+	title = zeroWidthReplacer.Replace(title)
 	title = strings.Join(strings.Fields(title), " ")
 	return title
+}
+
+var zeroWidthReplacer = strings.NewReplacer(
+	"\ufeff", " ", "\u200b", " ", "\u200c", " ", "\u200d", " ", "\u2060", " ", "\u180e", " ",
+)
+
+// MaxTitleRunes caps a release title. Real ones are far shorter; a scraped
+// page controls the title (a magnet dn has no length limit).
+const MaxTitleRunes = 512
+
+// TruncateRunes returns s cut to at most n runes.
+func TruncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }

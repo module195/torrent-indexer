@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -24,8 +26,15 @@ const (
 	cacheKey = "shortLivedCache"
 )
 
-// challangeMarkers are the (lowercase) texts of a Cloudflare challenge page.
-var challangeMarkers = [][]byte{[]byte("just a moment"), []byte("cf-chl-bypass"), []byte("under attack")}
+// challengeTitles are the exact (lowercase) titles of Cloudflare and
+// DDoS-Guard challenge pages.
+var challengeTitles = map[string]bool{
+	"just a moment...":                 true,
+	"just a moment\u2026":              true,
+	"just a moment":                    true,
+	"attention required! | cloudflare": true,
+	"ddos-guard":                       true,
+}
 
 // coalesceTimeout bounds a shared (coalesced) fetch, which runs detached from
 // any single caller's context.
@@ -76,6 +85,9 @@ func NewRequester(fs *FlareSolverr, c *cache.Redis, timeout time.Duration) *Requ
 			DisableKeepAlives:   false,            // Enable keep-alive
 			ForceAttemptHTTP2:   true,             // Use HTTP/2 when possible
 		},
+	}
+	if fs != nil {
+		fs.refetchTransport = r.httpClient.Transport
 	}
 	return r
 }
@@ -207,7 +219,7 @@ func (i *Requster) fetchDocument(ctx context.Context, url, ref, key string) (io.
 	}
 	bodyByte = buf.Bytes()
 	servedByPlainClient := resp != nil
-	challanged := hasChallange(bodyByte)
+	challanged := hasChallange(bodyByte) || (resp != nil && strings.EqualFold(resp.Header.Get("cf-mitigated"), "challenge"))
 	if challanged {
 		if withClearance && resp != nil {
 			logging.Debug().Str("url", url).Msg("Solver clearance rejected by the site")
@@ -281,15 +293,35 @@ func (i *Requster) ExpireDocument(ctx context.Context, url string) error {
 	return i.c.Del(ctx, key)
 }
 
-// hasChallange checks if the body contains a challange marker, ignoring case.
-// A plain search on a lowercased copy is ~17x faster than a (?i) regex on
-// pages of 50-170 KB.
+// hasChallange reports whether the page is a challenge page, by its first
+// <title> only. A search page echoes the query in its title, meta tags,
+// JSON-LD and body, so a marker searched anywhere in the body let an
+// anonymous q=just+a+moment fail the indexer and mark it unhealthy (security
+// audit 18/11). The whole title must equal a known challenge title.
 func hasChallange(body []byte) bool {
-	lower := bytes.ToLower(body)
-	for _, m := range challangeMarkers {
-		if bytes.Contains(lower, m) {
-			return true
-		}
+	title, ok := firstTitle(body)
+	if !ok {
+		return false
 	}
-	return false
+	return challengeTitles[title]
+}
+
+// firstTitle returns the trimmed, lowercased, unescaped text of the page's
+// first <title> element.
+func firstTitle(body []byte) (string, bool) {
+	lower := bytes.ToLower(body)
+	start := bytes.Index(lower, []byte("<title"))
+	if start < 0 {
+		return "", false
+	}
+	open := bytes.IndexByte(lower[start:], '>')
+	if open < 0 {
+		return "", false
+	}
+	text := lower[start+open+1:]
+	end := bytes.Index(text, []byte("</title"))
+	if end < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(html.UnescapeString(string(text[:end]))), true
 }

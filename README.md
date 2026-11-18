@@ -90,6 +90,7 @@ You can configure the server using the following environment variables:
 These additions are optional: existing routes and their JSON are unchanged.
 
 - **`X-Cache` header** on every `/indexers/<name>` route: `HIT`, `MISS` or `SHARED` when served through `RESPONSE_CACHE_TTL` (or by `torrentfilmeshds`' own cache), `BYPASS` otherwise.
+- **Query length**: every route answers `400` with `{"error": "q longer than 512 bytes"}` when any `q` is longer than 512 bytes, before the indexer runs.
 - **Cache bypass**: add `nocache=1` to an `/indexers/<name>` (or `/indexers/multi`) request, or send `Cache-Control: no-cache`, to skip the cached response and run the indexer again; the fresh result replaces the cached one. `nocache` is not part of the cache key. It skips only the response cache (for `torrentfilmeshds`, its own result cache), not the page cache of `SHORT_LIVED_CACHE_EXPIRATION`. With `RESPONSE_CACHE_BYPASS_TOKEN` set, the bypass also needs `Authorization: Bearer <token>`.
 - **`GET /sources?v=2`**: the same payload as `/sources` (including `indexer_names`) plus:
   - `api_version`: `2`

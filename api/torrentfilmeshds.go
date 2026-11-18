@@ -39,6 +39,19 @@ const tfhdsResultCacheTTL = 5 * time.Minute
 // Tempo máximo de uma busca compartilhada via singleflight
 const tfhdsFetchTimeout = 2 * time.Minute
 
+// Bounds on what a scraped page can make the indexer fetch at once. A page
+// with hundreds of link.php anchors used to start one fetch per anchor, all
+// at the same time, each able to buffer 16 MiB (security audit 18/11).
+const (
+	// tfhdsPageConcurrency limits how many detail pages are opened at once.
+	tfhdsPageConcurrency = 6
+	// tfhdsLinkPHPConcurrency limits the link.php fetches of one page.
+	tfhdsLinkPHPConcurrency = 6
+	// tfhdsMaxLinkPHP caps the distinct link.php anchors followed per page;
+	// a season page has one per episode and quality.
+	tfhdsMaxLinkPHP = 64
+)
+
 var imdbQueryRegex = regexp.MustCompile(`^tt\d{7,8}$`)
 
 // isIMDBQuery checks if the query is an IMDB ID (e.g. "tt1234567")
@@ -238,7 +251,10 @@ func (i *Indexer) fetchTorrentFilmesHDs(ctx context.Context, q, page string) (Re
 		return Response{Results: []schema.IndexedTorrent{}, Count: 0}, nil
 	}
 
+	sem := make(chan struct{}, tfhdsPageConcurrency)
 	indexedTorrents := utils.ParallelFlatMap(links, func(link string) ([]schema.IndexedTorrent, error) {
+		sem <- struct{}{}
+		defer func() { <-sem }()
 		return getTorrentsTorrentFilmesHDs(ctx, i, link)
 	})
 
@@ -405,20 +421,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	size = utils.StableUniq(size)
 
 	// Collect magnets from link.php pages (paralelo)
-	var linkPHPURLs, linkPHPLabels []string
-	baseURL := strings.TrimRight(torrentFilmesHDs.URL, "/")
-	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists || href == "" {
-			return
-		}
-		fullURL := href
-		if strings.HasPrefix(href, "/") {
-			fullURL = baseURL + href
-		}
-		linkPHPURLs = append(linkPHPURLs, fullURL)
-		linkPHPLabels = append(linkPHPLabels, s.Text())
-	})
+	linkPHPURLs, linkPHPLabels := collectLinkPHP(doc, strings.TrimRight(torrentFilmesHDs.URL, "/"))
 
 	// rótulo do botão de cada magnet ("S01.1080p | MKV | Ep.01/05 | Dual Áudio")
 	labels := map[string]string{}
@@ -431,16 +434,7 @@ func getTorrentsTorrentFilmesHDs(ctx context.Context, i *Indexer, link string) (
 	// resolvidos em paralelo, mas na ordem da página (o tamanho é casado por posição)
 	var magnetLinks []string
 	if len(linkPHPURLs) > 0 {
-		resolved := make([]string, len(linkPHPURLs))
-		var wg sync.WaitGroup
-		for idx, u := range linkPHPURLs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				resolved[idx] = resolveLinkPHP(ctx, i, u)
-			}()
-		}
-		wg.Wait()
+		resolved := resolveLinkPHPs(ctx, i, linkPHPURLs)
 		for idx, mag := range resolved {
 			if mag != "" {
 				magnetLinks = append(magnetLinks, mag)
@@ -769,6 +763,50 @@ var reTranslatedAnnounce = regexp.MustCompile(`(?i)(/|%2F)anunciar(&|$)`)
 // reMangledTracker casa um tr= sem pontuação: protocolo, host (termina em letra),
 // porta e "announce" colados.
 var reMangledTracker = regexp.MustCompile(`(?i)([?&]tr=)(udp|https?)([a-z0-9][a-z0-9.-]*\.[a-z]{2,})(\d{2,5})announce\b`)
+
+// collectLinkPHP returns the distinct link.php hrefs of a detail page (at most
+// tfhdsMaxLinkPHP, in page order) and the label of each one's first anchor.
+// A repeated anchor resolves to the same magnet, which would be deduplicated
+// later anyway.
+func collectLinkPHP(doc *goquery.Document, baseURL string) (urls, labels []string) {
+	seen := map[string]bool{}
+	doc.Find("a[href*='link.php']").Each(func(_ int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists || href == "" {
+			return
+		}
+		fullURL := href
+		if strings.HasPrefix(href, "/") {
+			fullURL = baseURL + href
+		}
+		if seen[fullURL] || len(urls) >= tfhdsMaxLinkPHP {
+			return
+		}
+		seen[fullURL] = true
+		urls = append(urls, fullURL)
+		labels = append(labels, s.Text())
+	})
+	return urls, labels
+}
+
+// resolveLinkPHPs resolves the link.php pages, at most tfhdsLinkPHPConcurrency
+// at a time, keeping page order (the size is matched by position).
+func resolveLinkPHPs(ctx context.Context, i *Indexer, urls []string) []string {
+	resolved := make([]string, len(urls))
+	sem := make(chan struct{}, tfhdsLinkPHPConcurrency)
+	var wg sync.WaitGroup
+	for idx, u := range urls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			resolved[idx] = resolveLinkPHP(ctx, i, u)
+		}()
+	}
+	wg.Wait()
+	return resolved
+}
 
 func resolveLinkPHP(ctx context.Context, i *Indexer, linkURL string) string {
 	doc, err := getDocument(ctx, i, linkURL, torrentFilmesHDs.URL)

@@ -4,12 +4,41 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	handler "github.com/module195/torrent-indexer/api"
 	"github.com/module195/torrent-indexer/schema"
 	meilisearch "github.com/module195/torrent-indexer/search"
 )
+
+// An oversized q is refused before any handler runs; a normal one passes.
+func Test_limitQueryMiddleware(t *testing.T) {
+	long := strings.Repeat("a", maxQueryBytes+1)
+	cases := []struct {
+		path    string
+		through bool
+	}{
+		{"/search?q=duna", true},
+		{"/search?q=" + strings.Repeat("a", maxQueryBytes), true},
+		{"/search?q=" + long, false},
+		{"/indexers/rede_torrent?q=" + long, false},
+		{"/indexers/multi?q=duna&q=" + long, false},
+		{"/sources?v=2", true},
+	}
+	for _, c := range cases {
+		reached := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rec := httptest.NewRecorder()
+		limitQueryMiddleware(next).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.path, nil))
+		if reached != c.through {
+			t.Errorf("%.60s: reached handler = %v, want %v", c.path, reached, c.through)
+		}
+		if !c.through && rec.Code != http.StatusBadRequest {
+			t.Errorf("%.60s: status = %d, want 400", c.path, rec.Code)
+		}
+	}
+}
 
 func Test_skipIMDBQueryMiddleware(t *testing.T) {
 	cases := []struct {

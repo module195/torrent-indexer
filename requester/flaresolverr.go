@@ -36,6 +36,10 @@ type FlareSolverr struct {
 	detected    bool // guarded by initMu
 	// clearances keeps each host's cf_clearance for the plain client
 	clearances *clearanceStore
+	// refetchTransport is the requester's guarded transport (netguard dial
+	// check, no proxy). The re-fetch with the solver's cookies runs in this
+	// process, so it must not use http.DefaultTransport (security audit 18/11).
+	refetchTransport http.RoundTripper
 }
 
 // dumbSession is a pool slot that is not a real FlareSolverr session.
@@ -451,8 +455,9 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 		return nil, false, &UpstreamStatusError{URL: _url, StatusCode: response.Solution.Status}
 	}
 
-	// Check if "Under attack" is in the response
-	if strings.Contains(response.Solution.Response, "Under attack") {
+	// the solver gave back the challenge page itself (matched by its title:
+	// a search page echoing "under attack" from the query is not one)
+	if hasChallange([]byte(response.Solution.Response)) {
 		return nil, false, fmt.Errorf("under attack")
 	}
 
@@ -466,9 +471,16 @@ func (f *FlareSolverr) get(ctx context.Context, _url string) (io.ReadCloser, boo
 	// If the response body is empty but cookies are present, make a new request
 	if response.Solution.Response == "" && len(response.Solution.Cookies) > 0 {
 		logging.Debug().Str("url", _url).Msg("FlareSolverr making new request with cookies")
-		// Create a new request with cookies
+		// Create a new request with cookies, through the same destination
+		// checks as the plain client: a redirect or a re-resolved host into
+		// the internal network is refused
+		if f.refetchTransport == nil {
+			return nil, false, fmt.Errorf("re-fetch with solver cookies needs the requester's transport: %s", _url)
+		}
 		client := &http.Client{
-			Timeout: time.Duration(f.maxTimeout) * time.Millisecond,
+			Timeout:       time.Duration(f.maxTimeout) * time.Millisecond,
+			Transport:     f.refetchTransport,
+			CheckRedirect: checkRedirect,
 		}
 		cookieJar, err := cookiejar.New(&cookiejar.Options{})
 		if err != nil {
