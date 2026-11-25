@@ -240,6 +240,8 @@ func Test_isMultiEpisodeRelease(t *testing.T) {
 		"The Boys 4ª Temporada Completa":     true,
 		"Breaking Bad S01-S05 Completa":      true,
 		"Breaking.Bad.S04E08-E10.1080p":      true,
+		"The.Chosen.S06E01-02-03.1080p":      true,
+		"Show.S01E01E02.1080p":               true,
 		"Breaking Bad Todas as Temporadas":   true,
 		"The.Boys.S04E05.1080p.WEB-DL":       false,
 		"Oppenheimer.2023.1080p.BluRay.x264": false,
@@ -267,6 +269,55 @@ func Test_needsFileList(t *testing.T) {
 	for _, c := range cases {
 		if got := needsFileList(c.it, c.series); got != c.want {
 			t.Errorf("%s: needsFileList = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// bludv's "Episódio 01 ao 03" magnet is named S06E01-02-03: a chain of three
+// episodes, not the range 1-2 (the E03 request used to drop it).
+func Test_FilterByEpisodeChain(t *testing.T) {
+	page := "https://bludv.ru/the-chosen-os-escolhidos-6a-temporada-torrent-2026-dual-audio-5-1-web-dl-1080p/"
+	in := []schema.IndexedTorrent{
+		{Title: "The.Chosen.S06E01-02-03.1080p.WEB-DL.DUAL.5.1", OriginalTitle: "The Chosen: Os Escolhidos 6ª Temporada", Details: page},
+		{Title: "The.Chosen.S06E04.1080p.WEB-DL.DUAL.5.1", OriginalTitle: "The Chosen: Os Escolhidos 6ª Temporada", Details: page},
+	}
+	for ep, want := range map[string][]string{
+		"1": {"The.Chosen.S06E01-02-03.1080p.WEB-DL.DUAL.5.1"},
+		"3": {"The.Chosen.S06E01-02-03.1080p.WEB-DL.DUAL.5.1"},
+		"4": {"The.Chosen.S06E04.1080p.WEB-DL.DUAL.5.1"},
+		"5": nil,
+	} {
+		got := FilterBy(nil, paramsReq(url.Values{"season": {"6"}, "episode": {ep}}), slices.Clone(in))
+		if titles := titlesOf(got); !slices.Equal(titles, want) {
+			t.Errorf("season=6&episode=%s:\n got %q\nwant %q", ep, titles, want)
+		}
+	}
+}
+
+func Test_parseReleaseInfoEpisodeChains(t *testing.T) {
+	covers := func(title string) []int {
+		info := parseReleaseInfo(title)
+		var eps []int
+		for e := 1; e <= 12; e++ {
+			if info.hasEpisode(0, e) {
+				eps = append(eps, e)
+			}
+		}
+		return eps
+	}
+	for title, want := range map[string][]int{
+		"The.Chosen.S06E01-02-03.1080p": {1, 2, 3},
+		"Show.S01E05-06-07-08.1080p":    {5, 6, 7, 8},
+		"Show.S01E01-E02-E03.mkv":       {1, 2, 3},
+		"Show.S01E01E02E03.1080p":       {1, 2, 3},
+		"Breaking.Bad.S04E08-E10.1080p": {8, 9, 10},
+		"Show.S01E01-03.1080p":          {1, 2, 3},
+		"Show.S01E04.1080p.WEB-DL":      {4},
+		"Show.S01E04 - 1080p":           {4},
+		"Show.S01E02.ENG.1080p":         {2},
+	} {
+		if got := covers(title); !slices.Equal(got, want) {
+			t.Errorf("%q covers %v, want %v", title, got, want)
 		}
 	}
 }

@@ -884,8 +884,10 @@ func positiveIntParam(r *http.Request, name string) int {
 var (
 	// "theboyss04e08": a season/episode marker glued to the name
 	reGluedEpisode = regexp.MustCompile(`([a-z])(s\d{1,2} ?e\d)`)
-	// S04E10, S04E08-E10, S01E01-03
-	reReleaseEpisode = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})(?: ?- ?e?(\d{1,3})\b)?`)
+	// S04E10, S04E08-E10, S01E01-03, S06E01-02-03, S01E01E02E03
+	reReleaseEpisode = regexp.MustCompile(`\bs(\d{1,2}) ?e(\d{1,3})((?: ?- ?e?\d{1,3}\b| ?e\d{1,3})*)`)
+	// one link of an episode chain: "-03", "-e03", "e03"
+	reReleaseEpisodeLink = regexp.MustCompile(`( ?- ?e?| ?e)(\d{1,3})`)
 	// S01-S05, S01 a S05
 	reReleaseSeasonRange = regexp.MustCompile(`\bs(\d{1,2}) ?(?:-|a|ao|ate|to) ?s?(\d{1,2})\b`)
 	// S04
@@ -928,13 +930,7 @@ func parseReleaseInfo(title string) releaseInfo {
 		}
 	}
 	for _, m := range reReleaseEpisode.FindAllStringSubmatch(s, -1) {
-		season, _ := strconv.Atoi(m[1])
-		from, _ := strconv.Atoi(m[2])
-		to, err := strconv.Atoi(m[3])
-		if err != nil || to < from {
-			to = from
-		}
-		info.episodes = append(info.episodes, releaseEpisodeRange{season, from, to})
+		info.episodes = append(info.episodes, episodeChain(m[1], m[2], m[3])...)
 	}
 	for _, re := range []*regexp.Regexp{reReleaseSeasonRange, reReleaseNthSeason, reReleaseSeasonWord} {
 		for _, m := range re.FindAllStringSubmatch(s, -1) {
@@ -952,7 +948,7 @@ func parseReleaseInfo(title string) releaseInfo {
 // one episode: a season pack, a season range or an episode range.
 func isMultiEpisodeRelease(title string) bool {
 	info := parseReleaseInfo(title)
-	if info.all || len(info.seasons) > 0 && len(info.episodes) == 0 {
+	if info.all || len(info.seasons) > 0 && len(info.episodes) == 0 || len(info.episodes) > 1 {
 		return true
 	}
 	for _, e := range info.episodes {
@@ -961,6 +957,29 @@ func isMultiEpisodeRelease(title string) bool {
 		}
 	}
 	return false
+}
+
+// episodeChain reads the episodes after "sNN eNN": one "-NN" is a range
+// (S04E08-E10), more links are a list (S06E01-02-03 is 1, 2 and 3, not 1-2),
+// and glued "eNN" are a list too (S01E01E02E03).
+func episodeChain(seasonStr, firstStr, links string) []releaseEpisodeRange {
+	season, _ := strconv.Atoi(seasonStr)
+	first, _ := strconv.Atoi(firstStr)
+	parts := reReleaseEpisodeLink.FindAllStringSubmatch(links, -1)
+	if len(parts) == 1 && strings.Contains(parts[0][1], "-") {
+		to, _ := strconv.Atoi(parts[0][2])
+		if to < first {
+			to = first
+		}
+		return []releaseEpisodeRange{{season, first, to}}
+	}
+	out := []releaseEpisodeRange{{season, first, first}}
+	for _, p := range parts {
+		if n, _ := strconv.Atoi(p[2]); n > 0 {
+			out = append(out, releaseEpisodeRange{season, n, n})
+		}
+	}
+	return out
 }
 
 func (ri releaseInfo) empty() bool {

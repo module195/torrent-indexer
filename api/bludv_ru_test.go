@@ -4,6 +4,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -98,6 +99,18 @@ func Test_withLabelTags(t *testing.T) {
 	for _, c := range cases {
 		if got := withLabelTags(c.title, c.label); got != c.want {
 			t.Errorf("withLabelTags(%q, %q) = %q, want %q", c.title, c.label, got, c.want)
+		}
+	}
+}
+
+func Test_bludvRuPageTTL(t *testing.T) {
+	for link, want := range map[string]time.Duration{
+		"https://bludv.ru/the-chosen-os-escolhidos-6a-temporada-torrent-2026-dual-audio-5-1-web-dl-1080p/": bludvRuSeasonPageTTL,
+		"https://bludv.ru/the-last-of-us-2-temporada-2025-13-04-2025/":                                     bludvRuSeasonPageTTL,
+		"https://bludv.ru/mortal-kombat-2-2026-dual-audio-dublado-1080p/":                                  0,
+	} {
+		if got := bludvRuPageTTL(link); got != want {
+			t.Errorf("bludvRuPageTTL(%q) = %v, want %v", link, got, want)
 		}
 	}
 }
