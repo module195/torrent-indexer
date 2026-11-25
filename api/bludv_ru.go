@@ -165,7 +165,7 @@ func extractBludvRuLinks(doc *goquery.Document) []string {
 }
 
 func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.IndexedTorrent, error) {
-	doc, err := getDocument(ctx, i, link, bludvRu.URL)
+	doc, err := getDocumentWithTTL(ctx, i, link, bludvRu.URL, bludvRuPageTTL(link))
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +208,26 @@ func getTorrentsBludvRu(ctx context.Context, i *Indexer, link string) ([]schema.
 	}
 
 	return indexedTorrents, nil
+}
+
+// bludvRuSeasonPageTTL is how long a season post stays in the document cache.
+// The site adds each new episode to the same post ("Episódio 04" under
+// "Episódio 01 ao 03"), so the default long-lived cache hid new episodes for
+// days.
+const bludvRuSeasonPageTTL = time.Hour
+
+// reBludvRuSeasonSlug matches the slug of a season post
+// (".../the-chosen-os-escolhidos-6a-temporada-torrent-2026-.../",
+// ".../the-last-of-us-2-temporada-2025-13-04-2025/").
+var reBludvRuSeasonSlug = regexp.MustCompile(`-\d{1,2}a?-temporada-`)
+
+// bludvRuPageTTL returns the document cache TTL for a post: short for a
+// season, the cache's default (0) for anything else.
+func bludvRuPageTTL(link string) time.Duration {
+	if reBludvRuSeasonSlug.MatchString(link) {
+		return bludvRuSeasonPageTTL
+	}
+	return 0
 }
 
 // bludvRuPage is what a post says about the whole title.
